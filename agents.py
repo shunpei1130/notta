@@ -59,6 +59,7 @@ def tick(c,pid):
  return {'processed':processed,'model_calls':0,'provider':'未接続'}
 def cancel(c,pid,jid):
  j=c.execute('SELECT * FROM agent_jobs WHERE id=? AND project=?',(jid,pid)).fetchone();check(j,'ジョブがありません。',404)
+ if j['status']=='cancelled':return {'ok':True,'duplicate':True}
  c.execute("UPDATE agent_jobs SET status='cancelled',lease=NULL,lease_until=0 WHERE id=?",(jid,));c.execute("UPDATE agents SET state='待機・ジョブ取消済み',version=version+1 WHERE id=?",(j['agent'],));event(c,jid,'cancelled','ユーザー取消');return {'ok':True}
 def cancel_all(c,pid,reason):
  for j in c.execute("SELECT id FROM agent_jobs WHERE project=? AND status IN ('queued','running','blocked_connector')",(pid,)).fetchall():cancel(c,pid,j['id'])

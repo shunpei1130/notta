@@ -1,6 +1,6 @@
 'use strict';
 const $=s=>document.querySelector(s),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const steps=[['loop','01 目的達成ループ'],['plan','02 企画の条件'],['tasks','03 役割と事例'],['launch','04 募集ページ'],['work','05 一緒につくる'],['trust','06 貢献と次の企画'],['connections','07 ツール接続']];
+const steps=[['loop','01 目的達成ループ'],['engine','AI モデル・処理'],['plan','02 企画の条件'],['tasks','03 役割と事例'],['launch','04 募集ページ'],['work','05 一緒につくる'],['trust','06 貢献と次の企画'],['connections','07 ツール接続']];
 let user=null,csrf='',projects=[],detail=null,loop=null,active='',view='loop';
 function say(message,error=false){$('#notice').textContent=message;$('#notice').className=error?'error':''}
 async function api(path,data){const r=await fetch('/api/'+path,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json','X-CSRF-Token':csrf}:{},body:data?JSON.stringify(data):undefined});const d=await r.json();if(!r.ok){if(r.status===401&&path!=='login'){user=null;csrf='';render()}throw Error(d.error||'処理できませんでした。')}return d}
@@ -8,7 +8,7 @@ function heading(k,title,desc){const labels={'WELCOME TO NOTTA':'ノッタ','STA
 function field(label,name,value='',max=500,type='textarea'){return `<label>${label}${type==='textarea'?`<textarea name="${name}" maxlength="${max}" required>${esc(value)}</textarea>`:`<input type="${type}" name="${name}" value="${esc(value)}" maxlength="${max}" required>`}</label>`}
 function owner(){return detail?.project.owner===user.id}
 function formData(form){return Object.fromEntries(new FormData(form))}
-async function refresh(){connections=await api('connections');projects=(await api('projects')).projects;if(!projects.some(p=>p.id===active))active=projects[0]?.id||'';detail=active?await api('projects/'+active):null;loop=detail&&detail.project.owner===user.id?await api('projects/'+active+'/loop'):null;render()}
+async function refresh(){const nc=await api('connections'),np=(await api('projects')).projects;const na=np.some(p=>p.id===active)?active:(np[0]?.id||'');const nd=na?await api('projects/'+na):null;const isOwner=nd&&nd.project.owner===user.id;const [nl,nm,ns]=await Promise.all([isOwner?api('projects/'+na+'/loop'):null,api('opencode/models'),isOwner?api('projects/'+na+'/opencode/status'):null]);connections=nc;projects=np;active=na;detail=nd;loop=nl;ocModels=nm;ocState=ns;render()}
 function hasUnsavedInput(){return !!user&&[...document.querySelectorAll('#main form input,#main form textarea,#main form select')].some(e=>{if(e.type==='hidden'||e.disabled||e.readOnly)return false;if(e.type==='file')return e.files.length>0;if(e.type==='checkbox'||e.type==='radio')return e.checked!==e.defaultChecked;if(e.tagName==='SELECT'){const o=[...e.options];return e.value!==(o.find(x=>x.defaultSelected)||o[0])?.value}return e.value!==e.defaultValue})}
 function confirmLeave(){return !hasUnsavedInput()||confirm('保存していない入力があります。破棄して移動しますか。')}
 window.addEventListener('beforeunload',e=>{if(hasUnsavedInput()){e.preventDefault();e.returnValue=''}});
@@ -25,11 +25,11 @@ function render(){
  $('#nav').innerHTML=user?steps.map(([v,l])=>`<button data-go="${v}" ${v===view?'aria-current="page"':''}>${l}</button>`).join(''):'';
  $('#picker').innerHTML=projects.map(p=>`<option value="${p.id}" ${p.id===active?'selected':''}>${esc(p.title)}</option>`).join('')||'<option>企画はまだありません</option>';
  $('#account').innerHTML=user?`${esc(user.name)}<br>${user.role==='creator'?'発信者':'ファン'} <button id="logout" class="secondary">ログアウト</button>`:'';
- $('#main').innerHTML=!user?loginView()+accountView():({connections:connectionsView,loop:loopView,plan:planView,tasks:tasksView,launch:launchView,work:workView,trust:trustView}[view]||planView)();bind();
+ $('#main').innerHTML=!user?loginView()+accountView():({engine:opencodeView,connections:connectionsView,loop:loopView,plan:planView,tasks:tasksView,launch:launchView,work:workView,trust:trustView}[view]||planView)();bind();
 }
 function guarded(fn){return async e=>{e?.preventDefault();const b=e?.submitter||e?.currentTarget;if(b?.tagName==='BUTTON')b.disabled=true;try{await fn(e)}catch(err){say(err.message||'通信できません。入力を控えて再試行してください。',true)}finally{if(b)b.disabled=false}}}
 function bind(){
- bindLoop();bindConnections();
+ bindLoop();bindConnections();bindOpenCode();
  if($('#account-setup'))$('#account-setup').onsubmit=guarded(async e=>{const d=formData(e.target);if(d.password!==d.confirm)throw Error('確認用パスワードが一致しません。');const r=await api('account/'+d.kind,{token:d.token,password:d.password,name:d.name});e.target.reset();say(r.message)});
 
  document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));

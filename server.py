@@ -8,6 +8,8 @@ HERE=Path(__file__).resolve().parent
 DB=None
 DB_BACKEND="sqlite"
 MAX_BODY=1600000
+CLI_PILOT_ENABLED=False # Operator activation and production migration are deliberately not performed.
+CLI_FIXTURE_MODE=False
 class Problem(Exception):
  def __init__(self,status,message):self.status=status;self.message=message
 def require(value,status=400,message='入力を確認してください。'):
@@ -59,6 +61,10 @@ CREATE TABLE IF NOT EXISTS account_tokens(token TEXT PRIMARY KEY,email TEXT NOT 
   tool_connections.schema(c)
   import payment_ledger
   payment_ledger.schema(c)
+  import cli_service
+  cli_service.schema(c)
+  import opencode_models
+  opencode_models.schema(c)
 def seed():
  """Fictional accounts only, explicit CLI flag; never automatic external registration."""
  if DB_BACKEND!='sqlite':raise ValueError('Demo seed forbidden on PostgreSQL')
@@ -114,7 +120,7 @@ class Handler(BaseHTTPRequestHandler):
    self.origin();path=urlparse(self.path).path
    if not path.startswith('/api/'):
     require(method=='GET',405)
-    files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/loop.js':'loop.js','/connections.js':'connections.js','/proposal-review.js':'proposal-review.js'};require(path in files,404,'ページがありません。')
+    files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/loop.js':'loop.js','/connections.js':'connections.js','/proposal-review.js':'proposal-review.js','/opencode.js':'opencode.js'};require(path in files,404,'ページがありません。')
     p=HERE/'static'/files[path];data=p.read_bytes();
     if DB_BACKEND=='postgres':
      if path=='/app.js':data=re.sub(rb'<details class="demo-only">.*?</details>',b'',data,flags=re.S)
@@ -125,6 +131,15 @@ class Handler(BaseHTTPRequestHandler):
     d=self.input()
     if path=='/api/login':self.login(c,d);return
     if path in ['/api/account/activate','/api/account/reset']:self.account(c,path,d);return
+    worker_route=re.fullmatch(r'/api/worker/(claim|poll|result)',path)
+    if worker_route:
+     require(CLI_PILOT_ENABLED,503,'CLI接続は未有効化です。')
+     import cli_service,proposals
+     c.execute('BEGIN IMMEDIATE')
+     try:result=cli_service.worker(c,self.headers.get('X-Notta-Grant'),self.headers.get('Origin'),worker_route[1],d)
+     except cli_service.Denied as e:raise Problem(e.status,e.message)
+     except proposals.InvalidProposal:raise Problem(400,'提案の形式が不正です。')
+     c.commit();self.respond(200,result);return
     u=self.session(c);require(hmac.compare_digest(self.headers.get('X-CSRF-Token',''),u['csrf']),403,'操作確認が切れました。再ログインしてください。')
     c.execute('BEGIN IMMEDIATE')
     result=self.write_api(c,path,d,u);c.commit();self.respond(200,result)
@@ -171,6 +186,14 @@ class Handler(BaseHTTPRequestHandler):
  def read_api(self,c,path):
   if path=='/api/health':self.respond(200,{'ok':True,'version':'3.6','mode':DB_BACKEND,'ai':'unconnected','search':'unconnected','payment':'unconnected'});return
   u=self.session(c)
+  if path=='/api/opencode/models':
+   import opencode_models
+   self.respond(200,opencode_models.inventory());return
+  ocstatus=re.fullmatch(r'/api/projects/([a-f0-9]{24})/opencode/status',path)
+  if ocstatus:
+   pid=ocstatus[1];owner(c,pid,u);import opencode_models,cli_service
+   opencode_models.reconcile_offline(c,u['id'],pid)
+   self.respond(200,{'selections':[opencode_models.selection(c,u['id'],pid,r)for r in opencode_models.proposals.ROLES],'audit':cli_service.summary(c,u['id'],pid),'jobs':[dict(x)for x in c.execute('SELECT id,task,status,result FROM agent_jobs WHERE project=?ORDER BY rowid DESC LIMIT 20',(pid,))],'workerEnabled':CLI_PILOT_ENABLED});return
   if path=='/api/me':self.respond(200,{'user':{k:u[k] for k in ['id','name','role']},'csrf':u['csrf']});return
   if path=='/api/connections':
    import tool_connections
@@ -203,6 +226,35 @@ class Handler(BaseHTTPRequestHandler):
    self.send_response(200);self.headers_common('application/octet-stream');self.send_header('Content-Disposition','attachment; filename="submission'+Path(f['name']).suffix+'"');self.send_header('Content-Length',str(len(f['data'])));self.end_headers();self.wfile.write(f['data']);return
   raise Problem(404,'APIがありません。')
  def write_api(self,c,path,d,u):
+  oc=re.fullmatch(r'/api/projects/([a-f0-9]{24})/opencode/(select|read|request)',path)
+  if oc:
+   pid,action=oc.groups();p=owner(c,pid,u);import opencode_models,agents
+   try:
+    if action=='select':return opencode_models.select(c,u['id'],pid,d)
+    if action=='read':
+     require(d=={});opencode_models.reconcile_offline(c,u['id'],pid);return {'selections':[opencode_models.selection(c,u['id'],pid,r)for r in opencode_models.proposals.ROLES],'jobs':[dict(x)for x in c.execute('SELECT id,task,status,result FROM agent_jobs WHERE project=?ORDER BY rowid DESC LIMIT 20',(pid,))]}
+    require(set(d)=={'role','task','event'});run=c.execute('SELECT status FROM goal_loops WHERE project=?',(pid,)).fetchone();require(run and run['status']not in ['停止中','目的達成'],409,'停止中・達成済みです。');selected=opencode_models.selection(c,u['id'],pid,d['role']);require(selected,409,'先に役割のモデルを保存してください。');result=agents.enqueue(c,p,d['role'],d['task'],d['event'],'OpenCode request, not executed');job=c.execute('SELECT input FROM agent_jobs WHERE id=?',(result['id'],)).fetchone();payload=json.loads(job['input'])
+    if result['duplicate']:
+     require(payload.get('engine')=='opencode'and payload.get('role')==d['role']and (payload.get('task')or{}).get('id')==d['task']and payload.get('model_selection')==selected,409,'同じイベントIDに異なる依頼は保存できません。')
+    else:
+     payload['engine']='opencode';payload['model_selection']=selected;payload['offline_expires']=stamp()+86400;c.execute('UPDATE agent_jobs SET input=?WHERE id=?',(json.dumps(payload,ensure_ascii=False),result['id']))
+     if not CLI_PILOT_ENABLED:
+      c.execute('UPDATE agent_jobs SET status=?,result=?WHERE id=?',('offline_saved',json.dumps({'status':'not_executed','message':'依頼メモとして保存。worker無効のため自動実行しません。24時間で失効します。','expires':payload['offline_expires']},ensure_ascii=False),result['id']));result['status']='offline_saved'
+    opencode_models.reconcile_offline(c,u['id'],pid)
+    return {**result,'executed':False,'message':'依頼を保存。接続なしでは自動実行せず、24時間で失効します。'}
+   except opencode_models.Invalid as e:raise Problem(409,str(e))
+   except agents.AgentError as e:raise Problem(e.status,e.message)
+  cli=re.fullmatch(r'/api/projects/([a-f0-9]{24})/cli/(prepare|pair|revoke|audit)',path)
+  if cli:
+   require(CLI_PILOT_ENABLED,503,'CLI接続は未有効化です。');pid,action=cli.groups();owner(c,pid,u);import cli_service
+   try:
+    if action=='prepare':
+     require(set(d)=={'job','workspace'});return cli_service.prepare(c,u['id'],pid,d['job'],self.headers.get('Origin')or os.environ.get('NOTTA_PUBLIC_ORIGIN')or'http://'+self.headers['Host'],d['workspace'])
+    if action=='pair':return cli_service.pair(c,u['id'],pid,d,fixture=CLI_FIXTURE_MODE)
+    if action=='revoke':
+     require(set(d)=={'grant'});return cli_service.revoke(c,u['id'],pid,d['grant'])
+    require(d=={});return cli_service.summary(c,u['id'],pid)
+   except cli_service.Denied as e:raise Problem(e.status,e.message)
   connection=re.fullmatch(r'/api/connections/(register|assign|mock|disconnect)',path)
   if connection:
    import tool_connections

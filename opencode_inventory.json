@@ -1,0 +1,75 @@
+{
+  "observedUTC": "2026-10-16T09:09:58.929532+00:00",
+  "version": "1.19.0",
+  "authenticatedProviders": [],
+  "source": "official CLI models opencode --verbose, auth list; no token files read",
+  "models": [
+    {
+      "providerID": "opencode",
+      "id": "deepseek-v4.1-flash-free",
+      "name": "DeepSeek V4.1 Flash Free",
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32000
+      },
+      "endpoint": "https://opencode.ai/inference/v1",
+      "catalogStatus": "active",
+      "credentialStatus": "auth-list:0-credentials",
+      "realInferenceVerified": false,
+      "officialFreeEvidence": "https://opencode.ai/v2/docs/console/models/",
+      "limitedTime": true,
+      "endDate": null,
+      "rateLimit": null,
+      "verification": "serve/APIと通常runの合成入力各1回を拒否。通常runはHTTP403・生成なし・usage不明"
+    },
+    {
+      "providerID": "opencode",
+      "id": "glm-5.3-flash-free",
+      "name": "GLM-5.3-Flash Free",
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      },
+      "limit": {
+        "context": 200000,
+        "output": 32000
+      },
+      "endpoint": "https://opencode.ai/inference/v1",
+      "catalogStatus": "active",
+      "credentialStatus": "auth-list:0-credentials",
+      "realInferenceVerified": false,
+      "officialFreeEvidence": "https://opencode.ai/v2/docs/console/models/",
+      "limitedTime": true,
+      "endDate": null,
+      "rateLimit": null,
+      "verification": "DeepSeek拒否で全体停止・GLMは未送信"
+    }
+  ],
+  "fallbackAllowed": false,
+  "lastProbe": {
+    "observedUTC": "2026-10-16T09:37:10.183737+00:00",
+    "serverVersion": "1.19.0",
+    "requests": 2,
+    "successfulGenerations": 0,
+    "status": "free_tier_denied",
+    "inputTokensReported": 0,
+    "outputTokensReported": 0,
+    "costReported": 0,
+    "stopped": true,
+    "secondModelAttempted": false,
+    "runCLI403": true,
+    "latestUsageKnown": false
+  }
+}
