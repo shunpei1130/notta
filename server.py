@@ -169,7 +169,7 @@ class Handler(BaseHTTPRequestHandler):
   c.execute('INSERT INTO sessions VALUES(?,?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),u['id'],csrf,stamp()+8*3600));c.commit()
   self.respond(200,{'user':{'id':u['id'],'name':u['name'],'role':u['role']},'csrf':csrf},'notta_session='+token+'; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800')
  def read_api(self,c,path):
-  if path=='/api/health':self.respond(200,{'ok':True,'version':3,'mode':'local','ai':'unconnected','search':'unconnected','payment':'unconnected'});return
+  if path=='/api/health':self.respond(200,{'ok':True,'version':'3.6','mode':DB_BACKEND,'ai':'unconnected','search':'unconnected','payment':'unconnected'});return
   u=self.session(c)
   if path=='/api/me':self.respond(200,{'user':{k:u[k] for k in ['id','name','role']},'csrf':u['csrf']});return
   if path=='/api/connections':

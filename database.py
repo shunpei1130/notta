@@ -46,8 +46,14 @@ class Postgres:
    try:import psycopg as driver
    except ImportError:raise ConfigurationError('Install the declared psycopg dependency before PostgreSQL startup')from None
   self.driver=driver
-  try:self.raw=driver.connect(dsn,row_factory=row_factory,connect_timeout=10,options='-c statement_timeout=15000 -c lock_timeout=10000')
-  except Exception:raise ConfigurationError('PostgreSQL unavailable; connection details suppressed')from None
+  try:
+   self.raw=driver.connect(dsn,row_factory=row_factory,connect_timeout=10)
+   self.raw.execute("SET LOCAL statement_timeout = '15s'")
+   self.raw.execute("SET LOCAL lock_timeout = '10s'")
+  except Exception as error:
+   if getattr(self,'raw',None):self.raw.close()
+   category=type(error).__name__
+   raise ConfigurationError('PostgreSQL unavailable ('+category+'); connection details suppressed')from None
  def __enter__(self):return self
  def __exit__(self,kind,value,tb):
   try:self.raw.rollback()if kind else self.raw.commit()
