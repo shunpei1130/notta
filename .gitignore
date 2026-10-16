@@ -1,0 +1,11 @@
+data/
+__pycache__/
+tests/evidence/
+tests/tmp*/
+.env
+.env.*
+*.sqlite*
+*.db
+*.pem
+*.key
+履歴*/
