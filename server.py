@@ -116,7 +116,9 @@ class Handler(BaseHTTPRequestHandler):
     require(method=='GET',405)
     files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/loop.js':'loop.js','/connections.js':'connections.js'};require(path in files,404,'ページがありません。')
     p=HERE/'static'/files[path];data=p.read_bytes();
-    if DB_BACKEND=='postgres' and path=='/app.js':data=re.sub(rb'<details class="demo-only">.*?</details>',b'',data,flags=re.S)
+    if DB_BACKEND=='postgres':
+     if path=='/app.js':data=re.sub(rb'<details class="demo-only">.*?</details>',b'',data,flags=re.S)
+     if path in ['/','/app.js']:data=data.decode('utf-8').replace('ローカル','限定公開検証').replace('統合版 v3','統合版 v3.5').encode('utf-8')
     self.send_response(200);self.headers_common(mimetypes.guess_type(p)[0] or 'application/octet-stream');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
    with connect() as c:
     if method=='GET':self.read_api(c,path);return
