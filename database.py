@@ -14,7 +14,8 @@ def translate(sql):
  # Replace bind markers only outside SQL literals; literal question marks survive.
  parts=re.split("('(?:''|[^'])*')",sql)
  for i in range(0,len(parts),2):
-  parts[i]=parts[i].replace('%','%%').replace('?','%s')
+  # Psycopg binds become $1 etc.; without boundaries ?AND becomes invalid $1AND.
+  parts[i]=parts[i].replace('%','%%').replace('?',' %s ')
   parts[i]=re.sub(r'\bIS\s+%s', 'IS NOT DISTINCT FROM %s',parts[i],flags=re.I)
   parts[i]=re.sub(r'\browid\b','_ordinal',parts[i],flags=re.I)
  sql=''.join(parts)

@@ -148,7 +148,10 @@ class Handler(BaseHTTPRequestHandler):
   except sqlite3.OperationalError:self.respond(503,{'error':'保存できませんでした。内容を控えて再試行してください。'})
   except (KeyError,TypeError,ValueError):self.respond(400,{'error':'入力の型や必須項目を確認してください。'})
   except (BrokenPipeError,ConnectionResetError):pass
-  except Exception:self.respond(500,{'error':'処理できませんでした。保存内容を確認して再試行してください。'})
+  except Exception as error:
+   reference=secrets.token_hex(6);route=locals().get('path','');category='project-create'if route=='/api/projects'else'model-select'if route.endswith('/opencode/select')else'other'
+   print(json.dumps({'event':'request_error','reference':reference,'route':category,'category':type(error).__name__,'sqlstate':getattr(error,'sqlstate',None)}),flush=True)
+   self.respond(500,{'error':'処理できませんでした。保存内容を確認してください。参照ID：'+reference})
  def account(self,c,path,d):
   # No email provider is contacted. Administrator-issued one-time token only.
   key=hashlib.sha256((self.client_address[0]+'account-token').encode()).hexdigest()
