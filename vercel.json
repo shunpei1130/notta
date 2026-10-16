@@ -1,5 +1,5 @@
 {
   "version": 2,
-  "builds": [{"src": "production.py", "use": "@vercel/python", "config": {"includeFiles": ["static/**", "*.py"]}}],
+  "builds": [{"src": "production.py", "use": "@vercel/python", "config": {"includeFiles": ["static/**", "*.py", "opencode_inventory.json"]}}],
   "routes": [{"src": "/(.*)", "dest": "/production.py"}]
 }
