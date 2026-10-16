@@ -24,11 +24,12 @@ def enqueue(c,p,role,task,key,reason):
  check(c.execute("SELECT COUNT(*)FROM agent_jobs WHERE project=? AND status IN ('queued','running')",(p['id'],)).fetchone()[0]<20,'待機ジョブ20件の上限です。',409)
  aid=p['id']+':'+role+(':'+task if role=='task'else'');jid=secrets.token_hex(12)
  t=c.execute('SELECT t.id,t.parent,t.title,l.acceptance,l.state,l.analogy FROM tasks t LEFT JOIN task_loops l ON l.task=t.id WHERE t.id=?',(task,)).fetchone()if task else None
- goal=c.execute('SELECT purpose,acceptance FROM goal_loops WHERE project=?',(p['id'],)).fetchone()
+ goal=c.execute('SELECT purpose,acceptance,version FROM goal_loops WHERE project=?',(p['id'],)).fetchone()
  payload={'role':role,'project':p['id'],'task':dict(t)if t else None,'goal':goal['purpose']if goal else p['goal'],'output':goal['acceptance']if goal else p['output'],'reason':reason,'authority':'提案・質問のみ。完了/権限/外部送信/支払を自動決定しない'}
  scope=None if role=='coordinator'else task
  history=c.execute('SELECT task,kind,body,created FROM loop_dialogue WHERE project=? AND (? OR task IS ? OR task IS NULL) ORDER BY rowid DESC LIMIT 20',(p['id'],role=='coordinator',scope)).fetchall()
  import tool_connections
+ payload['basis_versions']={'project':c.execute('SELECT version FROM projects WHERE id=?',(p['id'],)).fetchone()[0],'goal':goal['version']if goal else None}
  payload['tool_connection']=tool_connections.assigned(c,p['owner'],role)
  payload['dialogue']=[{**dict(r),'body':r['body'][:1000]}for r in reversed(history)]
  payload['task_tree']=[dict(r)for r in c.execute('SELECT t.id,t.parent,l.state,l.acceptance FROM tasks t LEFT JOIN task_loops l ON l.task=t.id WHERE t.project=? AND (? OR t.id=? OR t.parent=?)',(p['id'],role in ['coordinator','decomposer'],task,task))]
@@ -61,3 +62,17 @@ def cancel(c,pid,jid):
  c.execute("UPDATE agent_jobs SET status='cancelled',lease=NULL,lease_until=0 WHERE id=?",(jid,));c.execute("UPDATE agents SET state='待機・ジョブ取消済み',version=version+1 WHERE id=?",(j['agent'],));event(c,jid,'cancelled','ユーザー取消');return {'ok':True}
 def cancel_all(c,pid,reason):
  for j in c.execute("SELECT id FROM agent_jobs WHERE project=? AND status IN ('queued','running','blocked_connector')",(pid,)).fetchall():cancel(c,pid,j['id'])
+
+def mock_result(c,p,jid):
+ """Advisory fixture only: no real provider callback or grant is accepted."""
+ import proposals
+ check(isinstance(jid,str)and len(jid)==24 and all(x in '0123456789abcdef'for x in jid),'担当ジョブIDを確認してください。')
+ job=c.execute('SELECT j.*,a.role FROM agent_jobs j JOIN agents a ON a.id=j.agent WHERE j.id=?AND j.project=?',(jid,p['id'])).fetchone();check(job,'担当ジョブがありません。',404)
+ check(job['status']in ['queued','blocked_connector'],'取消・実行中・模擬済みのジョブは変更できません。',409)
+ run=c.execute('SELECT version,status FROM goal_loops WHERE project=?',(p['id'],)).fetchone();check(run and run['status']not in ['停止中','目的達成'],'停止中・達成済みでは提案を作りません。',409)
+ payload=json.loads(job['input']);basis=payload.get('basis_versions');check(basis=={'project':p['version'],'goal':run['version']},'元の目的・タスクが更新されています。新しい担当依頼を作ってください。',409)
+ import tool_connections
+ check(payload.get('tool_connection')==tool_connections.assigned(c,p['owner'],job['role']),'担当の接続候補・設定が更新されています。新しい担当依頼を作ってください。',409)
+ value=proposals.mock(job['role']);result={'mode':'mock_only','realModelCalls':0,'executed':False,'proposal':value,'basis_versions':basis,'requiresHumanReview':True}
+ c.execute("UPDATE agent_jobs SET status='mock_result',result=?,lease=NULL,lease_until=0 WHERE id=?",(json.dumps(result,ensure_ascii=False),jid));event(c,jid,'mock-result','形式検証済みの模擬提案。実AI/検索/CLI未稼働。タスク・親・目的の完了状態は変えない。')
+ return result

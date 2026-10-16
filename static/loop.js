@@ -1,5 +1,5 @@
 /* Same-origin UI; every state transition is validated server-side. */
-function loopView(){
+function baseLoopView(){
  if(!detail)return heading('PURPOSE, THEN PROGRESS','目的から、一緒に前へ。','達成条件を話し、タスクごとに事例と手法を確かめ、結果の証拠まで追います。')+planView();
  if(!owner())return heading('YOUR WORK HAS A PURPOSE','あなたの成果が、目的につながる。','担当するタスクの成果を提出し、本人が達成条件と貢献を確認します。')+`<section class="card"><h2>${esc(detail.project.title)}</h2><p>${esc(detail.project.goal)}</p><button data-go="work">担当・成果提出へ</button></section>`;
  if(!loop)return '<div class="empty">進捗を読み込んでください。</div>';
@@ -13,6 +13,7 @@ function dialogueView(task){const ds=loop.dialogue.filter(d=>d.task===task);retu
 function agentsView(){const a=loop.agents;return `<section class="card"><h2>役割別の担当エージェント</h2><p class="tag warn">${esc(a.provider)}</p><p>永続担当：${a.assignments.length} ／ 並列上限2・全ジョブ60・実モデル呼出上限20（現在0）</p>${a.assignments.map(x=>`<p>${esc(({coordinator:'統括・ユーザー対話',decomposer:'タスク分解',analogy:'アナロジー探索/適用説明',task:'タスク担当'})[x.role])} ${x.task?'／'+esc(loop.tasks.find(t=>t.task===x.task)?.title):''}：${esc(x.state)}</p>`).join('')}<form id="agent-request"><label>依頼先<select name="role"><option value="coordinator">統括</option><option value="decomposer">分解</option><option value="analogy">アナロジー</option><option value="task">各タスク担当</option></select></label><label>対象タスク<select name="task"><option value="">企画全体</option>${loop.tasks.map(t=>`<option value="${t.task}">${esc(t.title)}</option>`).join('')}</select></label><button>永続ジョブへ依頼を保存</button></form><button id="agent-tick" class="secondary">待機ジョブを確認（未接続なら接続待ち）</button>${a.jobs.map(j=>`<div class="source"><b>${esc(({queued:'依頼待ち',running:'ジョブ準備中',blocked_connector:'AI接続待ち・未実行',cancelled:'取消',failed:'上限停止'})[j.status]||j.status)}</b> ／ 試行${j.attempts}/3<p>${esc(j.result?JSON.parse(j.result).message:'まだ推論していません。')}</p><button class="secondary" data-cancel-job="${j.id}">ジョブ取消</button></div>`).join('')}</section>`}
 async function loopAction(action,data={}){const result=await api('projects/'+active+'/loop/'+action,{version:loop.run.version,...data});await refresh();say(result.message||'対話と進捗を保存しました。未接続のAIを実行したとは扱いません。')}
 function bindLoop(){
+ bindProposalReview();
  if($('#define-goal'))$('#define-goal').onsubmit=guarded(async e=>loopAction('define',formData(e.target)));
  if($('#pause-loop'))$('#pause-loop').onclick=guarded(async()=>{const reason=prompt('停止理由を記録');if(reason)await loopAction('pause',{reason})});
  if($('#resume-loop'))$('#resume-loop').onclick=guarded(async()=>{const reason=prompt('次の方針と再開理由（上限の判断枠を再開する場合も記録）');if(reason)await loopAction('resume',{reason})});
@@ -27,3 +28,5 @@ function bindLoop(){
  if($('#agent-tick'))$('#agent-tick').onclick=guarded(async()=>{await api('projects/'+active+'/agents/tick',{});await refresh();say('AI接続点は未接続です。推論・検索・実行は行っていません。')});
  document.querySelectorAll('[data-cancel-job]').forEach(b=>b.onclick=guarded(async()=>{await api('projects/'+active+'/agents/cancel',{job:b.dataset.cancelJob});await refresh();say('ジョブを取り消しました。')}));
 }
+
+function loopView(){return baseLoopView()+(loop&&owner()?proposalReviewView():'')}

@@ -5,10 +5,24 @@ NAMES=[('grok-build','Grok Build CLI','cli'),('muse-code','Muse Code CLI','cli')
 OFFICIAL=[('grok -p', 'https://docs.x.ai/build/overview'), ('muse exec / serve', 'https://dev.meta.ai/docs/muse-code'), ('dsh --profile headless (developer preview)', 'https://github.com/deepseek-ai/deepseek-harness'), ('claude -p / Agent SDK', 'https://code.claude.com/docs/en/headless'), ('IDEレビュー。外部Webから直接操作する公開APIは未確認', 'https://code.claude.com/docs/en/vs-code'), ('codex exec / SDK / app-server', 'https://developers.openai.com/blog/codex-as-a-platform'), ('IDE。自動化はapp-server / SDKを別に使用', 'https://learn.chatgpt.com/docs/codex/ide'), ('opencode serve / HTTP / SDK', 'https://docs.opencode.ai/docs/server/'), ('Windows: cmdc。Windows cmdシェルは使用禁止', 'https://commandcode.ai/docs/reference/cli'), ('pi -p / RPC / SDK', 'https://pi.dev/'), ('devin -p / acp', 'https://docs.devin.ai/cli'), ('copilot -p / SDK / ACP', 'https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-programmatic-reference'), ('agent -p / agent acp。バージョン検出が必要', 'https://cursor.com/docs/cli/overview'), ('agy -p。GEMINI_API_KEY単独では不可', 'https://www.antigravity.google/docs/cli/headless/')]
 CATALOG=[{'id':id,'name':name,'surface':surface,'recommended':id=='claude-cli','official':'公式方式確認済み・実機未検証','officialVerified':True,'headless':OFFICIAL[i][0],'source':OFFICIAL[i][1],'command':None,'restriction':'Claudeアカウントの第三者製品利用は事前許可または適切なAPI契約が必要。ローカル橋渡しは規約回避になりません。' if id in ['claude-cli','claude-extension','opencode'] else '本人の正式な導入・認証・権限確認が必要。実接続未検証。'}for i,(id,name,surface)in enumerate(NAMES)]
 ROLES=['coordinator','decomposer','analogy','task']
+def guide(tool):
+ item=next((x for x in CATALOG if x['id']==tool),None)
+ check(item,'登録済み候補を選んでください。')
+ extension=item['surface']=='extension'
+ return {'surface':item['surface'],'realExecutionEnabled':False,'steps':[
+  '公式資料で提供名・利用規約・認証方式と費用を本人が確認する。',
+  'IDE拡張の操作対象と対応範囲を確認する。外部Webからの非対話操作は未確認。'if extension else 'CLIの正式な導入・バージョン・非対話の入出力形式を本人が確認する。',
+  '対象workspace、送信データ、read/proposeの範囲、有効期限を個別に承認する。',
+  '実ブリッジのOrigin/Host・明示ペアリング・取消・監査を実機で検証する。',
+  '最初は合成タスクで出力形式・古い応答・停止時拒否を確認し、実接続を別に記録する。'],
+  'approvalNeeded':['正式導入/認証','workspaceと送信データ','モデル/検索・費用上限','実ブリッジと継続アクセス'],
+  'adapterStatus':'IDE経由の連携方式が未確定。CLIとして代用しない。'if extension else '固定操作の実行アダプタは未接続。ブラウザから任意コマンドは実行しない。'}
 class ToolError(Exception):
  def __init__(self,message,status=400):self.message=message;self.status=status
 def check(ok,message,status=400):
  if not ok:raise ToolError(message,status)
+
+for item in CATALOG:item['connectionGuide']=guide(item['id'])
 def workspace(v):
  check(isinstance(v,str)and 1<=len(v)<=500 and '\x00'not in v,'workspaceの宣言を確認してください。')
  p=PureWindowsPath(v);check(p.is_absolute()and re.fullmatch('[A-Za-z]:',p.drive)and '..'not in p.parts,'絶対ローカルworkspaceのみ。UNC・相対・親参照は使えません。')
@@ -21,7 +35,7 @@ def event(c,u,t,action,message):c.execute('INSERT INTO tool_events(owner,tool,ac
 def read(c,u):return {'catalog':CATALOG,'settings':[dict(r)for r in c.execute('SELECT * FROM tool_settings WHERE owner=?',(u,))],'assignments':[dict(r)for r in c.execute('SELECT role,tool FROM role_tools WHERE owner=?',(u,))],'events':[dict(r)for r in c.execute('SELECT tool,action,message,created FROM tool_events WHERE owner=? ORDER BY id',(u,))],'realVerifiedConnections':0,'boundary':'インストール・ログイン・実ペアリング・認証情報保存・常駐・コマンド実行は行いません。モック結果は実接続の証明ではありません。'}
 def assigned(c,u,role):
  r=c.execute('SELECT s.*FROM role_tools r JOIN tool_settings s ON s.owner=r.owner AND s.tool=r.tool WHERE r.owner=? AND r.role=?',(u,role)).fetchone()
- return {'tool':r['tool'],'state':r['state'],'realVerified':False,'officialVerified':True}if r else None
+ return {'tool':r['tool'],'state':r['state'],'version':r['version'],'realVerified':False,'officialVerified':True}if r else None
 def act(c,u,action,d):
  check(isinstance(d,dict),'JSONが必要です。')
  allowed={'register':{'tool','workspace','version'},'assign':{'tool','role'},'mock':{'tool','version','simulateFailure'},'disconnect':{'tool','version'}}

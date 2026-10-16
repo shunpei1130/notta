@@ -114,7 +114,7 @@ class Handler(BaseHTTPRequestHandler):
    self.origin();path=urlparse(self.path).path
    if not path.startswith('/api/'):
     require(method=='GET',405)
-    files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/loop.js':'loop.js','/connections.js':'connections.js'};require(path in files,404,'ページがありません。')
+    files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/loop.js':'loop.js','/connections.js':'connections.js','/proposal-review.js':'proposal-review.js'};require(path in files,404,'ページがありません。')
     p=HERE/'static'/files[path];data=p.read_bytes();
     if DB_BACKEND=='postgres':
      if path=='/app.js':data=re.sub(rb'<details class="demo-only">.*?</details>',b'',data,flags=re.S)
@@ -226,6 +226,7 @@ class Handler(BaseHTTPRequestHandler):
     loop_engine.sync(c,p);run=c.execute('SELECT status FROM goal_loops WHERE project=?',(pid,)).fetchone()
     if action=='request':
      require(run['status'] not in ['停止中','目的達成'],409,'停止中・達成済みです。再開を確認してください。');return agents.enqueue(c,p,d.get('role'),d.get('task'),d.get('event'),'ユーザー依頼')
+    if action=='mock_result':return agents.mock_result(c,p,d.get('job'))
     if action=='tick':return agents.tick(c,pid)
     if action=='cancel':return agents.cancel(c,pid,d.get('job'))
     raise Problem(404,'エージェント操作がありません。')
