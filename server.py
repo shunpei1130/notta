@@ -120,12 +120,18 @@ class Handler(BaseHTTPRequestHandler):
    self.origin();path=urlparse(self.path).path
    if not path.startswith('/api/'):
     require(method=='GET',405)
-    files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/loop.js':'loop.js','/connections.js':'connections.js','/proposal-review.js':'proposal-review.js','/opencode.js':'opencode.js'};require(path in files,404,'ページがありません。')
-    p=HERE/'static'/files[path];data=p.read_bytes();
+    files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/loop.js':'loop.js','/connections.js':'connections.js','/proposal-review.js':'proposal-review.js','/opencode.js':'opencode.js','/motion.js':'motion.js'}
+    if path in files:p=HERE/'static'/files[path]
+    else:
+     # 同梱アセット（書体・3Dアイコン・Lottieプレイヤ・落款JSON）だけを配信する
+     part=path[1:].split('/');require(len(part)==2 and part[0] in ('fonts','icons','vendor','assets') and part[1] and '..' not in part[1],404,'ページがありません。')
+     p=HERE/'static'/part[0]/part[1]
+    require(p.is_file(),404,'ページがありません。');data=p.read_bytes();
     if DB_BACKEND=='postgres':
      if path=='/app.js':data=re.sub(rb'<details class="demo-only">.*?</details>',b'',data,flags=re.S)
      if path in ['/','/app.js']:data=data.decode('utf-8').replace('ローカル','限定公開検証').replace('統合版 v3','統合版 v3.5').encode('utf-8')
-    self.send_response(200);self.headers_common(mimetypes.guess_type(p)[0] or 'application/octet-stream');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+    ctype=mimetypes.guess_type(str(p))[0] or {'woff2':'font/woff2','webp':'image/webp','json':'application/json','js':'text/javascript'}.get(p.suffix.lstrip('.'),'application/octet-stream')
+    self.send_response(200);self.headers_common(ctype);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
    with connect() as c:
     if method=='GET':self.read_api(c,path);return
     d=self.input()
