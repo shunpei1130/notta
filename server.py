@@ -99,6 +99,7 @@ class Handler(BaseHTTPRequestHandler):
   self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
  def headers_common(self,mime):
   self.send_header('Content-Type',mime);self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Referrer-Policy','no-referrer');self.send_header('X-Frame-Options','DENY')
+  if os.getenv('NOTTA_PUBLIC_SANDBOX')=='yes':self.send_header('X-Robots-Tag','noindex, nofollow')
   self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
  def session(self,c):
   cookies=dict(x.strip().split('=',1) for x in self.headers.get('Cookie','').split(';') if '=' in x);token=cookies.get('notta_session','')

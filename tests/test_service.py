@@ -19,6 +19,7 @@ import service_core as core
 import service_billing as billing
 import service_providers as providers
 import wsgi
+import notta_service
 
 
 def draft(goal='ファンと小冊子をつくる'):
@@ -380,6 +381,35 @@ class ServiceTest(unittest.TestCase):
         result,body=get('/'); self.assertEqual(result['status'],200); self.assertIn('service.js',body.decode())
         self.assertEqual(get('/api/projects')[0]['status'],404)
         self.assertEqual(get('/api/service/me')[0]['status'],401)
+
+    def test_public_sandbox_is_opt_in_and_noindex_covers_html_api_and_errors(self):
+        application=wsgi.create_application(s.DB,initialize=False)
+        def get(path):
+            result={}; body=application({'REQUEST_METHOD':'GET','PATH_INFO':path,'SERVER_PORT':'8765','HTTP_HOST':'localhost:8765','wsgi.input':io.BytesIO()},lambda status,headers:result.update(status=int(status.split()[0]),headers=dict(headers)))
+            return result,b''.join(body)
+        with patch.dict(os.environ):
+            os.environ.pop('NOTTA_PUBLIC_SANDBOX',None)
+            self.assertFalse(notta_service.configuration()['publicSandbox'])
+            for flag,expected in (('no',False),('true',False),('yes',True)):
+                with self.subTest(flag=flag),patch.dict(os.environ,{'NOTTA_PUBLIC_SANDBOX':flag}):
+                    self.assertEqual(notta_service.configuration()['publicSandbox'],expected)
+                    for path in ('/','/workspace','/terms','/p/1234567890abcdef','/api/service/config','/api/service/me','/api/projects'):
+                        response,body=get(path)
+                        self.assertEqual(response['headers'].get('X-Robots-Tag'),'noindex, nofollow' if expected else None)
+                        if path=='/api/service/config':self.assertEqual(json.loads(body)['publicSandbox'],expected)
+
+    def test_public_sandbox_noindex_also_covers_grounding_html(self):
+        pid=self.project(); request=s.ident()
+        self.c.execute('INSERT INTO svc_ai_requests(id,user_id,project,fingerprint,mode,period,status,reserved_yen,cost_yen,search_used,created,result) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                       (request,self.uid,pid,'fixture','free','lifetime','completed',0,0,1,s.stamp(),json.dumps({'searchEntryPoint':'<p>検索候補</p>'})))
+        self.c.commit()
+        application=wsgi.create_application(s.DB,initialize=False)
+        for flag,expected in (('no',False),('yes',True)):
+            with self.subTest(flag=flag),patch.dict(os.environ,{'NOTTA_PUBLIC_SANDBOX':flag}),patch.object(s.Handler,'session',return_value={'id':self.uid,'csrf':'fixture'}):
+                response={}; body=application({'REQUEST_METHOD':'GET','PATH_INFO':'/api/service/grounding/'+request,'SERVER_PORT':'8765','HTTP_HOST':'localhost:8765','wsgi.input':io.BytesIO()},lambda status,headers:response.update(status=int(status.split()[0]),headers=dict(headers)))
+                self.assertEqual(response['status'],200)
+                self.assertEqual(response['headers'].get('X-Robots-Tag'),'noindex, nofollow' if expected else None)
+                self.assertIn('検索候補',b''.join(body).decode())
 
 
 if __name__ == '__main__': unittest.main()

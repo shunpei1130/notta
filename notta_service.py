@@ -15,11 +15,15 @@ def enabled():
     return os.getenv("NOTTA_SERVICE_ENABLED") == "yes"
 
 
+def public_sandbox():
+    return os.getenv("NOTTA_PUBLIC_SANDBOX") == "yes"
+
+
 def configuration():
     return {"mailReady": providers.mail_ready(), "aiReady": providers.ai_ready(),
             "searchReady": providers.search_ready(), "billingReady": billing.ready(),
             "terms": core.TERMS, "billingEnvironment": os.getenv("STRIPE_ENVIRONMENT", "sandbox"),
-            "billingProvider": "stripe",
+            "billingProvider": "stripe", "publicSandbox": public_sandbox(),
             "phone": os.getenv("NOTTA_SELLER_PHONE", "090-9325-5945"), "price": 3000}
 
 
@@ -79,6 +83,7 @@ def dispatch(handler, method, path):
                     handler.send_header('Referrer-Policy', 'no-referrer')
                     handler.send_header('X-Content-Type-Options', 'nosniff')
                     handler.send_header('X-Frame-Options', 'SAMEORIGIN')
+                    if public_sandbox(): handler.send_header('X-Robots-Tag', 'noindex, nofollow')
                     handler.send_header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; sandbox allow-popups allow-popups-to-escape-sandbox; frame-ancestors 'self'; base-uri 'none'; form-action 'none'")
                     handler.send_header('Content-Length', str(len(raw)))
                     handler.end_headers(); handler.wfile.write(raw)

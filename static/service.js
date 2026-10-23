@@ -43,6 +43,14 @@ async function refreshMe() {
 }
 function headingFocus() { const title = $('#main h1'); if (title) { title.tabIndex = -1; title.focus({preventScroll:true}); } }
 function main(html) { $('#main').innerHTML = html; }
+function sandboxNotice() {
+  if (!state.config.publicSandbox || $('#sandbox-notice')) return;
+  const banner = document.createElement('aside');
+  banner.id = 'sandbox-notice'; banner.className = 'sandbox-notice';
+  banner.setAttribute('aria-label', '検証用サイト');
+  banner.textContent = '検証用サイトです。決済はテストのみで、実際の請求はありません。';
+  document.body.prepend(banner);
+}
 function navigate(path) { state.dirty = false; location.href = path; }
 
 function landing() {
@@ -330,7 +338,7 @@ async function render() {
   landing();
 }
 async function boot() {
-  try { state.config = await api('/config'); await render(); }
+  try { state.config = await api('/config'); sandboxNotice(); await render(); }
   catch (error) { main(`<div class="error-page"><h1>画面を開けませんでした。</h1><p>${esc(error.message)}</p><a href="/" class="button secondary">ホームに戻る</a></div>`); }
 }
 boot();
