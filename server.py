@@ -146,13 +146,13 @@ class Handler(BaseHTTPRequestHandler):
      except cli_service.Denied as e:raise Problem(e.status,e.message)
      except proposals.InvalidProposal:raise Problem(400,'提案の形式が不正です。')
      c.commit();self.respond(200,result);return
-    u=self.session(c);require(hmac.compare_digest(self.headers.get('X-CSRF-Token',''),u['csrf']),403,'操作確認が切れました。再ログインしてください。')
+    u=self.session(c);require(hmac.compare_digest(self.headers.get('X-CSRF-Token',''),u['csrf']),403,'操作の確認情報が無効になりました。再ログインしてください。')
     c.execute('BEGIN IMMEDIATE')
     result=self.write_api(c,path,d,u);c.commit();self.respond(200,result)
   except Problem as e:self.respond(e.status,{'error':e.message})
-  except sqlite3.IntegrityError:self.respond(409,{'error':'重複または参照の競合があります。再読込してください。'})
+  except sqlite3.IntegrityError:self.respond(409,{'error':'データの重複、または関連するデータの競合がありました。画面を再読み込みしてください。'})
   except sqlite3.OperationalError:self.respond(503,{'error':'保存できませんでした。内容を控えて再試行してください。'})
-  except (KeyError,TypeError,ValueError):self.respond(400,{'error':'入力の型や必須項目を確認してください。'})
+  except (KeyError,TypeError,ValueError):self.respond(400,{'error':'入力形式と、必須項目が入力されているかを確認してください。'})
   except (BrokenPipeError,ConnectionResetError):pass
   except Exception as error:
    reference=secrets.token_hex(6);route=locals().get('path','');category='project-create'if route=='/api/projects'else'model-select'if route.endswith('/opencode/select')else'other'
