@@ -52,6 +52,32 @@ def _url(value):
     return value
 
 
+def _jpy_presentment(value, *, amount=False):
+    presentment = value.get("presentment_details")
+    return not presentment or (presentment.get("presentment_currency") == "jpy"
+                              and (not amount or presentment.get("presentment_amount") == 3000))
+
+
+def _no_tax_or_discount(value):
+    return ((value.get("automatic_tax") or {}).get("enabled") is False
+            and not value.get("default_tax_rates") and not value.get("discounts"))
+
+
+def _validate_session(session):
+    # A Price can remain unspecified when tax calculation is off. Enforce the
+    # customer's actual JPY total instead of enabling Stripe Tax to set a label.
+    details = session.get("total_details") or {}
+    s.require(session.get("mode") == "subscription" and session.get("currency") == "jpy"
+              and session.get("amount_subtotal") == 3000 and session.get("amount_total") == 3000
+              and (session.get("automatic_tax") or {}).get("enabled") is False
+              and session.get("allow_promotion_codes") is False and not session.get("discounts")
+              and (session.get("adaptive_pricing") or {}).get("enabled") is False
+              and details.get("amount_tax") == 0 and details.get("amount_discount") == 0
+              and details.get("amount_shipping") in (0, None) and not session.get("shipping_cost")
+              and not session.get("currency_conversion") and _jpy_presentment(session, amount=True),
+              503, "税込総額3,000円の申込条件を照合できませんでした。追加で支払わずお問い合わせください。")
+
+
 class Stripe:
     """Small synchronous SDK boundary; exceptions contain no provider details."""
     def __init__(self):
@@ -85,7 +111,7 @@ class Stripe:
                   and price.get("recurring", {}).get("interval") == "month"
                   and price.get("recurring", {}).get("interval_count") == 1
                   and price.get("recurring", {}).get("usage_type") == "licensed"
-                  and price.get("tax_behavior") == "inclusive", 503, "月額料金の設定を確認しています。")
+                  and price.get("tax_behavior") in ("inclusive", "unspecified"), 503, "月額料金の設定を確認しています。")
 
     def checkout(self, key, user):
         origin = os.getenv("NOTTA_PUBLIC_ORIGIN", "").rstrip("/")
@@ -100,6 +126,8 @@ class Stripe:
             "mode": "subscription", "line_items": [{"price": self.price, "quantity": 1}],
             "client_reference_id": key, "customer_email": user["email"], "metadata": metadata,
             "subscription_data": {"metadata": metadata, "billing_mode": {"type": "flexible"}}, "locale": "ja",
+            "automatic_tax": {"enabled": False}, "allow_promotion_codes": False,
+            "adaptive_pricing": {"enabled": False},
             "integration_identifier": "notta_monthly_" + suffix,
             "success_url": origin + "/billing/return", "cancel_url": origin + "/workspace",
         }, options={"idempotency_key": "notta-checkout-" + key}, mutation=True))
@@ -149,6 +177,17 @@ class Stripe:
                          options={"idempotency_key": "notta-cancel-" + sid}, mutation=True)
 
 
+def _resume_url(row):
+    stripe = Stripe()
+    stripe.validate()
+    current = stripe.session(row["link_id"])
+    s.require(current.get("id") == row["link_id"] and current.get("status") == "open"
+              and current.get("client_reference_id") == row["id"]
+              and _metadata(current.get("metadata", {}), row), 409, "前の決済の支払い状態を確認してください。")
+    _validate_session(current)
+    return _url(current.get("url"))
+
+
 def checkout(c, user, data):
     s.require(ready(), 503, "月額プランは準備中です。現在は請求されません。")
     s.require(data.get("consent") is True and data.get("terms") == core.TERMS, 400, "料金・自動更新・解約・返金条件をご確認ください。")
@@ -163,7 +202,7 @@ def checkout(c, user, data):
     if old:
         s.require(old["status"] == "pending" and (old["link_id"] or "").startswith("cs_") and old["url"], 409, "前の決済を確認中です。追加で支払わずお問い合わせください。")
         c.commit()
-        return {"url": _url(old["url"]), "id": old["id"]}
+        return {"url": _resume_url(old), "id": old["id"]}
     old_sub = core.subscription(c, uid)
     s.require(not old_sub or old_sub["status"] in ("CANCELED", "DEACTIVATED") and old_sub["paid_until"] <= s.stamp(), 409, "既存の契約を確認してください。新しい契約は作成していません。")
     count = c.execute("SELECT COUNT(DISTINCT user_id) FROM svc_subscriptions WHERE status IN ('ACTIVE','PENDING') OR paid_until>?", (s.stamp(),)).fetchone()[0]
@@ -182,6 +221,7 @@ def checkout(c, user, data):
         mutation_started = True
         result = stripe.checkout(key, user)
         s.require(isinstance(result.get("id"), str) and result["id"].startswith("cs_"), 502, "決済の照合が必要です。")
+        _validate_session(result)
         url = _url(result.get("url"))
         c.execute("UPDATE svc_checkouts SET status='pending',link_id=?,order_id=?,url=? WHERE id=?", (result["id"], result["id"], url, key))
         c.commit()
@@ -203,9 +243,12 @@ def _validate_subscription(current, local, stripe):
     items = current.get("items", {})
     rows = items.get("data", [])
     s.require(current.get("id") == local["id"] and _id(current.get("customer")) == local["customer_id"]
+              and current.get("currency") == "jpy"
               and not items.get("has_more") and len(rows) == 1 and rows[0].get("quantity") == 1
               and _id(rows[0].get("price")) == stripe.price and not current.get("trial_end")
-              and not current.get("pause_collection") and not current.get("discounts"), 503, "契約内容を照合できませんでした。")
+              and not current.get("pause_collection") and _no_tax_or_discount(current)
+              and not rows[0].get("tax_rates") and not rows[0].get("discounts")
+              and _jpy_presentment(current), 503, "契約内容を照合できませんでした。")
     return rows[0]
 
 
@@ -217,6 +260,7 @@ def link_subscription(c, row, stripe):
         c.execute("UPDATE svc_checkouts SET status='expired',url=NULL WHERE id=? AND status='pending'", (row["id"],))
         c.commit()
         return None
+    _validate_session(session)
     if session.get("status") != "complete":
         return None
     sid, customer = _id(session.get("subscription")), _id(session.get("customer"))
@@ -241,6 +285,9 @@ def _invoice_record(c, invoice, local, stripe, item):
     parent = invoice.get("parent", {}) or {}
     s.require(parent.get("type") == "subscription_details" and _id(parent.get("subscription_details", {}).get("subscription")) == sid
               and _id(invoice.get("customer")) == customer and invoice.get("currency") == "jpy", 503, "請求の契約者を照合できませんでした。")
+    s.require(_no_tax_or_discount(invoice) and not invoice.get("total_taxes")
+              and not invoice.get("total_discount_amounts") and not invoice.get("total_pretax_credit_amounts")
+              and invoice.get("amount_shipping") == 0, 503, "請求に追加の税・割引・送料がないことを確認しています。")
     if invoice.get("status") != "paid":
         return None
     lines = invoice.get("lines", {})
@@ -251,13 +298,15 @@ def _invoice_record(c, invoice, local, stripe, item):
     detail = line_parent.get("subscription_item_details", {})
     price = (line.get("pricing", {}) or {}).get("price_details", {})
     period = line.get("period", {})
-    s.require(invoice.get("total") == 3000 and invoice.get("amount_paid") == 3000 and invoice.get("amount_remaining") == 0
+    s.require(invoice.get("subtotal") == 3000 and invoice.get("total") == 3000 and invoice.get("amount_paid") == 3000 and invoice.get("amount_remaining") == 0
               and invoice.get("amount_due") == 3000 and not invoice.get("amount_paid_out_of_band", 0)
               and invoice.get("billing_reason") in ("subscription_create", "subscription_cycle")
               and _id(price.get("price")) == stripe.price and line.get("quantity") == 1
               and line.get("currency") == "jpy" and line.get("livemode") is stripe.live
               and line_parent.get("type") == "subscription_item_details" and detail.get("subscription") == sid
               and line.get("amount") == 3000 and _id(detail.get("subscription_item")) == item.get("id")
+              and not line.get("taxes") and not line.get("discounts") and not line.get("discount_amounts")
+              and not line.get("pretax_credit_amounts")
               and not detail.get("proration") and isinstance(period.get("start"), int)
               and isinstance(period.get("end"), int) and 27 * 86400 <= period["end"] - period["start"] <= 32 * 86400,
               503, "支払額と月額プランの期間が一致しません。")
@@ -272,7 +321,8 @@ def _invoice_record(c, invoice, local, stripe, item):
     intent = stripe.intent(_id(reference.get("payment_intent")))
     s.require(intent.get("id") == _id(reference.get("payment_intent")) and intent.get("status") == "succeeded"
               and _id(intent.get("customer")) == customer and intent.get("currency") == "jpy"
-              and intent.get("amount") == 3000 and intent.get("amount_received") == 3000,
+              and intent.get("amount") == 3000 and intent.get("amount_received") == 3000
+              and _jpy_presentment(intent, amount=True),
               503, "入金を確認できませんでした。")
     charge = stripe.charge(_id(intent.get("latest_charge")))
     s.require(charge.get("id") == _id(intent.get("latest_charge")) and _id(charge.get("payment_intent")) == intent["id"]
@@ -320,7 +370,8 @@ def sync_subscription(c, sid, stripe=None):
                 records.append(record)
         for record in records:
             old = c.execute("SELECT user_id,subscription_id,invoice_id FROM svc_payments WHERE id=?", (record["id"],)).fetchone()
-            s.require(not old or tuple(old) == (local["user_id"], sid, record["invoice"]), 409, "別の契約の支払情報です。")
+            s.require(not old or tuple(old[key] for key in ("user_id", "subscription_id", "invoice_id"))
+                      == (local["user_id"], sid, record["invoice"]), 409, "別の契約の支払情報です。")
             c.execute("INSERT OR IGNORE INTO svc_payments(id,subscription_id,user_id,invoice_id,amount,currency,completed,period_end,refunded) VALUES(?,?,?,?,?,?,?,?,?)", (record["id"], sid, local["user_id"], record["invoice"], 3000, "JPY", record["completed"], record["end"], 0))
             for refund in record["refunds"]:
                 status = {"succeeded": "COMPLETED", "pending": "PENDING", "requires_action": "PENDING", "failed": "FAILED", "canceled": "FAILED"}.get(refund.get("status"))
@@ -366,11 +417,19 @@ def summary(c, uid):
     sub = core.subscription(c, uid)
     first = c.execute("SELECT completed,refunded FROM svc_payments WHERE user_id=? ORDER BY completed,id LIMIT 1", (uid,)).fetchone()
     request = c.execute("SELECT requested,status FROM svc_refund_requests WHERE user_id=? ORDER BY requested DESC LIMIT 1", (uid,)).fetchone()
-    pending = c.execute("SELECT status,url,link_id FROM svc_checkouts WHERE user_id=? AND status IN ('reserved','pending','unknown') ORDER BY created DESC LIMIT 1", (uid,)).fetchone()
+    pending = c.execute("SELECT * FROM svc_checkouts WHERE user_id=? AND status IN ('reserved','pending','unknown') ORDER BY created DESC LIMIT 1", (uid,)).fetchone()
+    pending_url = None
+    if pending and pending["status"] == "pending" and (pending["link_id"] or "").startswith("cs_") and ready():
+        try:
+            # The dashboard contains a direct resume link. Never expose a saved
+            # URL unless its current Session still matches the agreed amount.
+            pending_url = _resume_url(pending)
+        except (providers.ProviderError, s.Problem):
+            pass  # Keep the dashboard available and retain the unresolved hold.
     return {"paid": core.paid(c, uid), "subscription": {key: sub[key] for key in ("status", "paid_until", "cancel_at", "first_paid", "refunded")} if sub else None,
             "refundEligible": bool(first and not first["refunded"] and s.stamp() <= first["completed"] + 7 * 86400),
             "refundRequest": dict(request) if request else None, "pending": pending["status"] if pending else None,
-            "pendingUrl": pending["url"] if pending and pending["status"] == "pending" and (pending["link_id"] or "").startswith("cs_") else None}
+            "pendingUrl": pending_url}
 
 
 def cancel(c, uid, data):

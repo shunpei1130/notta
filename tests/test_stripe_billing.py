@@ -8,6 +8,7 @@ import secrets
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs
 
@@ -16,6 +17,7 @@ import server as s
 import service_core as core
 import service_providers as providers
 import service_stripe as billing
+from database import HybridRow
 
 try:
     import stripe as stripe_sdk
@@ -48,6 +50,9 @@ class FakeStripe:
         if self.failure:
             raise self.failure
         session = {"id": "cs_test_" + key, "livemode": False, "mode": "subscription", "status": "open",
+                   "currency": "jpy", "amount_subtotal": 3000, "amount_total": 3000,
+                   "automatic_tax": {"enabled": False}, "adaptive_pricing": {"enabled": False}, "allow_promotion_codes": False,
+                   "total_details": {"amount_tax": 0, "amount_discount": 0, "amount_shipping": 0},
                    "client_reference_id": key, "metadata": {"app": billing.APP, "checkout_id": key, "user_id": user["id"]},
                    "url": "https://checkout.stripe.com/c/pay/test_" + key}
         self.sessions[session["id"]] = session
@@ -56,7 +61,8 @@ class FakeStripe:
     def complete(self, sid, paid=True):
         session = self.sessions[sid]
         session.update(status="complete", subscription="sub_notta", customer="cus_notta", currency="jpy", amount_total=3000)
-        self.subscriptions["sub_notta"] = {"id": "sub_notta", "livemode": False, "customer": "cus_notta", "status": "active",
+        self.subscriptions["sub_notta"] = {"id": "sub_notta", "livemode": False, "customer": "cus_notta", "status": "active", "currency": "jpy",
+            "automatic_tax": {"enabled": False}, "default_tax_rates": [], "discounts": [],
             "metadata": copy.deepcopy(session["metadata"]), "cancel_at_period_end": False, "items": {"has_more": False, "data": [
                 {"id": "si_notta", "price": {"id": self.price}, "quantity": 1, "current_period_end": END}]}}
         self.add_bill("in_first", NOW, END, paid)
@@ -65,7 +71,8 @@ class FakeStripe:
         pid, cid = "pi_" + iid, "ch_" + iid
         self.bills[iid] = {"id": iid, "livemode": False, "customer": "cus_notta", "currency": "jpy", "status": "paid" if paid else "open",
             "parent": {"type": "subscription_details", "subscription_details": {"subscription": "sub_notta"}},
-            "total": 3000, "amount_paid": 3000 if paid else 0, "amount_remaining": 0 if paid else 3000, "amount_due": 3000,
+            "subtotal": 3000, "total": 3000, "amount_paid": 3000 if paid else 0, "amount_remaining": 0 if paid else 3000, "amount_due": 3000,
+            "automatic_tax": {"enabled": False}, "default_tax_rates": [], "discounts": [], "amount_shipping": 0,
             "billing_reason": "subscription_create" if iid == "in_first" else "subscription_cycle",
             "status_transitions": {"paid_at": start}, "lines": {"has_more": False, "data": [
                 {"id": "il_" + iid, "livemode": False, "currency": "jpy", "amount": 3000, "quantity": 1, "pricing": {"price_details": {"price": self.price}},
@@ -164,6 +171,36 @@ class StripeBillingTest(unittest.TestCase):
         self.assertFalse(billing.summary(self.c, self.user["id"])["paid"])
         self.assertIsNone(billing.summary(self.c, self.other["id"])["pendingUrl"])
 
+    def test_summary_only_returns_fresh_verified_resume_url_without_new_session(self):
+        sid = self.checkout()
+        session = self.fake.sessions[sid]
+        self.assertEqual(billing.summary(self.c, self.user["id"])["pendingUrl"], session["url"])
+        changes = [(session, "amount_total", 3300),
+                   (session["total_details"], "amount_tax", 300),
+                   (session, "allow_promotion_codes", True),
+                   (session, "adaptive_pricing", {"enabled": True}),
+                   (session, "url", "https://attacker.test/pay"),
+                   (session["metadata"], "user_id", self.other["id"]),
+                   (session, "status", "complete"), (session, "status", "expired")]
+        for obj, field, value in changes:
+            with self.subTest(field=field, value=value):
+                old = obj[field]; obj[field] = value
+                result = billing.summary(self.c, self.user["id"])
+                self.assertIsNone(result["pendingUrl"])
+                self.assertEqual(result["pending"], "pending")
+                self.assertFalse(result["paid"])
+                obj[field] = old
+        session["url"] = "https://checkout.stripe.com/c/pay/current_verified_url"
+        self.assertEqual(billing.summary(self.c, self.user["id"])["pendingUrl"], session["url"])
+        self.assertEqual(self.fake.new_count, 1)
+        with patch.object(self.fake, "session", side_effect=providers.ProviderError("unavailable")):
+            result = billing.summary(self.c, self.user["id"])
+            self.assertIsNone(result["pendingUrl"])
+            self.assertEqual(result["pending"], "pending")
+        with patch.object(billing, "ready", return_value=False), patch.object(self.fake, "session") as read:
+            self.assertIsNone(billing.summary(self.c, self.user["id"])["pendingUrl"])
+            read.assert_not_called()
+
     def test_unknown_checkout_keeps_reservation_and_does_not_blindly_retry(self):
         self.fake.failure = providers.ProviderError("unknown", uncertain=True)
         with self.assertRaises(providers.ProviderError): self.checkout()
@@ -192,6 +229,81 @@ class StripeBillingTest(unittest.TestCase):
         self.assertFalse(summary["paid"])
         self.assertEqual(self.c.execute("SELECT COUNT(*) FROM svc_payments").fetchone()[0], 0)
 
+    def test_adjusted_session_never_returns_checkout_link_and_keeps_unknown(self):
+        original = self.fake.checkout
+        def adjusted(key, user):
+            result = original(key, user)
+            result["total_details"]["amount_tax"] = 300
+            result["amount_total"] = 3300
+            return result
+        self.fake.checkout = adjusted
+        self.problem(503, self.checkout)
+        row = self.c.execute("SELECT status,url FROM svc_checkouts").fetchone()
+        self.assertEqual(tuple(row), ("unknown", None))
+        self.assertEqual(self.fake.new_count, 1)
+
+    def test_reused_and_completed_session_reject_extra_tax_discount_fx_or_wrong_total(self):
+        sid = self.checkout()
+        session = self.fake.sessions[sid]
+        changes = [(session, "automatic_tax", {"enabled": True}),
+                   (session, "automatic_tax", None),
+                   (session, "adaptive_pricing", {"enabled": True}),
+                   (session, "allow_promotion_codes", True),
+                   (session, "discounts", [{"coupon": "coupon_other"}]),
+                   (session, "amount_total", 3300), (session, "amount_subtotal", 2999),
+                   (session, "currency", "usd"),
+                   (session, "presentment_details", {"presentment_currency": "usd", "presentment_amount": 20}),
+                   (session["total_details"], "amount_tax", 300),
+                   (session["total_details"], "amount_discount", 300),
+                   (session["total_details"], "amount_shipping", 100)]
+        absent = object()
+        for obj, field, value in changes:
+            with self.subTest(field=field, value=value):
+                old = obj.get(field, absent); obj[field] = value
+                self.problem(503, self.checkout)  # Reusing a saved link also re-reads Stripe.
+                self.assertEqual(self.fake.new_count, 1)
+                if old is absent: obj.pop(field)
+                else: obj[field] = old
+        self.fake.complete(sid)
+        session["total_details"]["amount_discount"] = 1
+        self.problem(503, lambda: billing.reconcile(self.c, self.user["id"]))
+        self.assertFalse(core.paid(self.c, self.user["id"]))
+
+    def test_subscription_and_item_tax_rates_discounts_and_fx_fail_closed(self):
+        sid = self.checkout(); self.fake.complete(sid)
+        sub = self.fake.subscriptions["sub_notta"]
+        item = sub["items"]["data"][0]
+        changes = [(sub, "automatic_tax", {"enabled": True}), (sub, "default_tax_rates", ["txr_extra"]),
+                   (sub, "discounts", ["di_extra"]), (item, "tax_rates", ["txr_extra"]), (item, "discounts", ["di_extra"]),
+                   (sub, "presentment_details", {"presentment_currency": "usd"})]
+        absent = object()
+        for obj, field, value in changes:
+            with self.subTest(field=field):
+                old = obj.get(field, absent); obj[field] = value
+                self.problem(503, lambda: billing.reconcile(self.c, self.user["id"]))
+                self.assertFalse(core.paid(self.c, self.user["id"]))
+                if old is absent: obj.pop(field)
+                else: obj[field] = old
+
+    def test_invoice_tax_discount_shipping_and_fx_rejected_even_if_totals_cancel_out(self):
+        sid = self.checkout(); self.fake.complete(sid)
+        invoice = self.fake.bills["in_first"]
+        line = invoice["lines"]["data"][0]
+        changes = [(invoice, "automatic_tax", {"enabled": True}), (invoice, "default_tax_rates", ["txr_extra"]),
+                   (invoice, "discounts", ["di_extra"]), (invoice, "total_taxes", [{"amount": 300}]),
+                   (invoice, "total_discount_amounts", [{"amount": 300}]), (invoice, "amount_shipping", 100),
+                   (line, "taxes", [{"amount": 300}]), (line, "discount_amounts", [{"amount": 300}]),
+                   (line, "discounts", ["di_extra"]), (invoice, "subtotal", 2700),
+                   (self.fake.intents["pi_in_first"], "presentment_details", {"presentment_currency": "usd", "presentment_amount": 20})]
+        absent = object()
+        for obj, field, value in changes:
+            with self.subTest(field=field):
+                old = obj.get(field, absent); obj[field] = value
+                self.problem(503, lambda: billing.reconcile(self.c, self.user["id"]))
+                self.assertFalse(core.paid(self.c, self.user["id"]))
+                if old is absent: obj.pop(field)
+                else: obj[field] = old
+
     def test_settled_payment_grants_exact_paid_period_and_is_idempotent(self):
         self.paid()
         result = billing.reconcile(self.c, self.user["id"])
@@ -201,6 +313,24 @@ class StripeBillingTest(unittest.TestCase):
         self.assertEqual(self.c.execute("SELECT COUNT(*) FROM svc_payments").fetchone()[0], 1)
         self.assertEqual(self.c.execute("SELECT COUNT(*) FROM svc_events WHERE event='payment_confirmed'").fetchone()[0], 1)
         self.assertFalse(billing.summary(self.c, self.other["id"])["paid"])
+
+    def test_reconciliation_accepts_existing_payment_with_postgres_dict_row_shape(self):
+        self.paid()
+        inner = self.c
+        class DictPaymentRows:
+            def __getattr__(self, name): return getattr(inner, name)
+            def execute(self, sql, params=()):
+                cursor = inner.execute(sql, params)
+                if sql.startswith("SELECT user_id,subscription_id,invoice_id FROM svc_payments"):
+                    row = cursor.fetchone()
+                    return SimpleNamespace(fetchone=lambda: HybridRow(dict(row)) if row else None)
+                return cursor
+        result = billing.reconcile(DictPaymentRows(), self.user["id"])
+        self.assertTrue(result["paid"])
+        self.assertEqual(self.c.execute("SELECT COUNT(*) FROM svc_payments").fetchone()[0], 1)
+        self.c.execute("UPDATE svc_payments SET user_id=?", (self.other["id"],))
+        self.c.commit()
+        self.problem(409, lambda: billing.reconcile(DictPaymentRows(), self.user["id"]))
 
     def test_price_customer_invoice_payment_and_charge_mismatches_fail_closed(self):
         sid = self.checkout(); self.fake.complete(sid)
@@ -360,7 +490,11 @@ class StripeSDKBoundaryTest(unittest.TestCase):
         self.assertRegex(params["integration_identifier"][0], r"^notta_monthly_[a-z]{8}$")
         self.assertNotIn("payment_method_types", encoded)
         self.assertNotIn("trial", encoded)
-        self.assertNotIn("automatic_tax", encoded)
+        self.assertEqual(params["automatic_tax[enabled]"], ["false"])
+        self.assertEqual(params["allow_promotion_codes"], ["false"])
+        self.assertEqual(params["adaptive_pricing[enabled]"], ["false"])
+        self.assertNotIn("tax_rates", encoded)
+        self.assertNotIn("discounts", encoded)
 
     def test_current_account_and_exact_inclusive_price_are_required(self):
         price = {"id": "price_notta", "object": "price", "livemode": False, "active": True, "currency": "jpy", "unit_amount": 3000,
@@ -371,6 +505,18 @@ class StripeSDKBoundaryTest(unittest.TestCase):
         price["unit_amount"] = 3001
         self.transport.side_effect = [self.response({"id": "acct_test", "object": "account"}), self.response(price)]
         with self.assertRaises(s.Problem): self.provider.validate()
+
+    def test_unspecified_or_inclusive_price_allowed_exclusive_unknown_and_missing_rejected(self):
+        price = {"id": "price_notta", "object": "price", "livemode": False, "active": True, "currency": "jpy", "unit_amount": 3000,
+                 "type": "recurring", "billing_scheme": "per_unit", "recurring": {"interval": "month", "interval_count": 1, "usage_type": "licensed"}}
+        for behavior in ("inclusive", "unspecified", "exclusive", "unknown", None):
+            with self.subTest(behavior=behavior):
+                price["tax_behavior"] = behavior
+                self.transport.side_effect = [self.response({"id": "acct_test", "object": "account"}), self.response(price)]
+                if behavior in ("inclusive", "unspecified"):
+                    self.provider.validate()
+                else:
+                    with self.assertRaises(s.Problem): self.provider.validate()
         self.transport.side_effect = [self.response({"id": "acct_wrong", "object": "account"})]
         with self.assertRaises(s.Problem): self.provider.validate()
 
