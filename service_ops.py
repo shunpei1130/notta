@@ -5,12 +5,15 @@ import os
 
 import server
 import service_providers as providers
+import service_stripe as billing
 
 
 def report(connection):
     counts = {row[0]: row[1] for row in connection.execute('SELECT event,COUNT(*) FROM svc_events GROUP BY event')}
     payments = connection.execute('SELECT COUNT(*),COALESCE(SUM(amount),0),COALESCE(SUM(CASE WHEN refunded=1 THEN amount ELSE 0 END),0) FROM svc_payments').fetchone()
-    return {'readiness': {'mail': providers.mail_ready(), 'ai': providers.ai_ready(), 'search': providers.search_ready(), 'billing': providers.Square.ready()},
+    return {'readiness': {'mail': providers.mail_ready(), 'ai': providers.ai_ready(), 'search': providers.search_ready(), 'billing': billing.ready()},
+            'billingEnvironment': os.getenv('STRIPE_ENVIRONMENT', 'sandbox'),
+            'acquisitionEligible': os.getenv('STRIPE_ENVIRONMENT') == 'production',
             'events': counts, 'payments': {'count':payments[0],'receivedYen':payments[1],
                 'refundedYen':connection.execute("SELECT COALESCE(SUM(amount),0) FROM svc_refunds WHERE status='COMPLETED'").fetchone()[0],
                 'refundPendingYen':connection.execute("SELECT COALESCE(SUM(amount),0) FROM svc_refunds WHERE status='PENDING'").fetchone()[0]},

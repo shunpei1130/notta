@@ -258,6 +258,8 @@ class ServiceTest(unittest.TestCase):
         self.problem(403,lambda:billing.webhook(self.c,raw,'bad'))
         with patch.object(providers,'Square',return_value=fake):
             billing.webhook(self.c,raw,signature)
+            self.assertTrue(core.paid(self.c,self.uid))
+            self.assertEqual(self.c.execute('SELECT COUNT(*) FROM svc_payments').fetchone()[0],1)
             self.assertTrue(billing.webhook(self.c,raw,signature)['duplicate'])
             fake.refunded=True; fake.version+=1
             data['event_id']='late-event'; late=json.dumps(data).encode(); sig=base64.b64encode(hmac.new(b'test-key',b'https://notta.example/api/service/square/webhook'+late,hashlib.sha256).digest()).decode()
@@ -273,6 +275,91 @@ class ServiceTest(unittest.TestCase):
         fake.refunded=True; fake.version+=1
         with patch.object(providers,'Square',return_value=fake): billing.reconcile(self.c,self.uid)
         self.assertEqual(self.c.execute('SELECT status FROM svc_refund_requests').fetchone()[0],'completed')
+
+    def test_failed_or_rejected_pending_refund_restores_paid_period(self):
+        fake=FakeSquare(); self.start_checkout(fake)
+        payment=fake.payment('pay1'); payment['refund_ids']=['refund-pay1']
+        refund=fake.refund('refund-pay1')
+        with patch.object(providers,'Square',return_value=fake),patch.object(fake,'payment',return_value=payment),patch.object(fake,'refund',return_value=refund):
+            for status in ('FAILED','REJECTED'):
+                with self.subTest(status=status):
+                    refund['status']='PENDING'
+                    billing.reconcile(self.c,self.uid)
+                    self.assertFalse(core.paid(self.c,self.uid))
+                    self.assertEqual(self.c.execute('SELECT refunded FROM svc_payments').fetchone()[0],1)
+                    refund['status']=status
+                    billing.reconcile(self.c,self.uid)
+                    self.assertTrue(core.paid(self.c,self.uid))
+                    self.assertEqual(self.c.execute('SELECT refunded FROM svc_payments').fetchone()[0],0)
+                    self.assertEqual(self.c.execute('SELECT status FROM svc_refunds').fetchone()[0],status)
+                    self.assertEqual(self.c.execute('SELECT COUNT(*) FROM svc_payments').fetchone()[0],1)
+
+    def test_failed_refund_does_not_clear_other_pending_or_completed_refund(self):
+        fake=FakeSquare(); self.start_checkout(fake)
+        payment=fake.payment('pay1'); payment['refund_ids']=['attempt-pay1','other-pay1']
+        refunds={rid:{'id':rid,'payment_id':'pay1','amount_money':{'amount':3000,'currency':'JPY'},'status':'PENDING'} for rid in payment['refund_ids']}
+        with patch.object(providers,'Square',return_value=fake),patch.object(fake,'payment',return_value=payment),patch.object(fake,'refund',side_effect=lambda rid:refunds[rid]):
+            billing.reconcile(self.c,self.uid)
+            self.assertFalse(core.paid(self.c,self.uid))
+            refunds['attempt-pay1']['status']='FAILED'
+            for status in ('PENDING','COMPLETED'):
+                with self.subTest(other_status=status):
+                    refunds['other-pay1']['status']=status
+                    billing.reconcile(self.c,self.uid)
+                    self.assertFalse(core.paid(self.c,self.uid))
+                    self.assertEqual(self.c.execute('SELECT refunded FROM svc_payments').fetchone()[0],1)
+                    self.assertEqual(self.c.execute("SELECT status FROM svc_refunds WHERE id='other-pay1'").fetchone()[0],status)
+            payment['refunded_money']={'amount':3000,'currency':'JPY'}
+            billing.reconcile(self.c,self.uid)
+            self.assertFalse(core.paid(self.c,self.uid))
+
+    def test_known_refund_is_refreshed_when_payment_snapshot_omits_its_id(self):
+        fake=FakeSquare(); self.start_checkout(fake)
+        payment=fake.payment('pay1'); payment['refund_ids']=['refund-pay1']
+        refund=fake.refund('refund-pay1'); refund['status']='PENDING'
+        with patch.object(providers,'Square',return_value=fake),patch.object(fake,'payment',return_value=payment),patch.object(fake,'refund',return_value=refund) as lookup:
+            billing.reconcile(self.c,self.uid)
+            self.assertFalse(core.paid(self.c,self.uid))
+            payment['refund_ids']=[]
+            lookup.reset_mock()
+            billing.reconcile(self.c,self.uid)
+            lookup.assert_called_once_with('refund-pay1')
+            self.assertFalse(core.paid(self.c,self.uid))
+            refund['status']='FAILED'
+            billing.reconcile(self.c,self.uid)
+            self.assertTrue(core.paid(self.c,self.uid))
+
+    def test_refund_recorded_after_provider_reads_cannot_be_cleared(self):
+        fake=FakeSquare(); self.start_checkout(fake)
+        period_end=billing.period_end
+        with patch.object(providers,'Square',return_value=fake):
+            billing.reconcile(self.c,self.uid)
+            for status in ('PENDING','COMPLETED'):
+                with self.subTest(status=status):
+                    self.c.execute('DELETE FROM svc_refunds')
+                    self.c.commit()
+                    def concurrent_refund(invoice, subscription):
+                        end=period_end(invoice,subscription)
+                        self.c.execute('INSERT INTO svc_refunds(id,payment_id,amount,status,updated) VALUES(?,?,?,?,?)',('refund-pay1','pay1',3000,status,s.stamp()))
+                        self.c.execute("UPDATE svc_payments SET refunded=1 WHERE id='pay1'")
+                        self.c.commit()
+                        return end
+                    with patch.object(billing,'period_end',side_effect=concurrent_refund):
+                        billing.reconcile(self.c,self.uid)
+                    self.assertFalse(core.paid(self.c,self.uid))
+                    self.assertEqual(self.c.execute('SELECT refunded FROM svc_payments').fetchone()[0],1)
+
+    def test_completed_refund_cannot_be_replaced_by_older_failed_snapshot(self):
+        fake=FakeSquare(); self.start_checkout(fake)
+        payment=fake.payment('pay1'); payment['refund_ids']=['refund-pay1']
+        refund=fake.refund('refund-pay1')
+        with patch.object(providers,'Square',return_value=fake),patch.object(fake,'payment',return_value=payment),patch.object(fake,'refund',return_value=refund):
+            billing.reconcile(self.c,self.uid)
+            self.assertFalse(core.paid(self.c,self.uid))
+            refund['status']='FAILED'
+            billing.reconcile(self.c,self.uid)
+            self.assertFalse(core.paid(self.c,self.uid))
+            self.assertEqual(self.c.execute('SELECT status FROM svc_refunds').fetchone()[0],'COMPLETED')
 
     def test_search_is_separate_from_private_project_and_chat(self):
         private=draft('非公開の企画の目的')

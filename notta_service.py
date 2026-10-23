@@ -7,7 +7,7 @@ import re
 
 import server as s
 import service_core as core
-import service_billing as billing
+import service_stripe as billing
 import service_providers as providers
 
 
@@ -17,8 +17,9 @@ def enabled():
 
 def configuration():
     return {"mailReady": providers.mail_ready(), "aiReady": providers.ai_ready(),
-            "searchReady": providers.search_ready(), "billingReady": providers.Square.ready(),
-            "terms": core.TERMS, "billingEnvironment": os.getenv("SQUARE_ENVIRONMENT", "sandbox"),
+            "searchReady": providers.search_ready(), "billingReady": billing.ready(),
+            "terms": core.TERMS, "billingEnvironment": os.getenv("STRIPE_ENVIRONMENT", "sandbox"),
+            "billingProvider": "stripe",
             "phone": os.getenv("NOTTA_SELLER_PHONE", "090-9325-5945"), "price": 3000}
 
 
@@ -33,14 +34,15 @@ def dashboard(c, user):
 def dispatch(handler, method, path):
     try:
         with s.connect() as c:
-            if path == "/api/service/square/webhook":
+            s.require(path != "/api/service/square/webhook", 404, "ページがありません。")
+            if path == "/api/service/stripe/webhook":
                 s.require(method == "POST", 405)
                 try:
                     size = int(handler.headers.get("Content-Length", "0"))
                 except ValueError:
                     raise s.Problem(400, "通知サイズが不正です。")
                 s.require(0 < size <= 262144, 413)
-                result = billing.webhook(c, handler.rfile.read(size), handler.headers.get("x-square-hmacsha256-signature"))
+                result = billing.webhook(c, handler.rfile.read(size), handler.headers.get("Stripe-Signature"))
                 handler.respond(200, result)
                 return
             if method == "GET" and path == "/api/service/config":

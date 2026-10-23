@@ -131,7 +131,11 @@ def sync_subscription(c, subscription_id, square=None):
             continue
         s.require(payment.get("amount_money") == {"amount": 3000, "currency": "JPY"}, 503, "支払額が月額プランと一致しません。")
         refunds = []
-        for rid in payment.get("refund_ids", []):
+        # Payment and refund reads can arrive out of order. Refresh known refunds
+        # even when an older Payment snapshot does not contain their IDs yet.
+        refund_ids = set(payment.get("refund_ids", []))
+        refund_ids.update(row[0] for row in c.execute("SELECT id FROM svc_refunds WHERE payment_id=?", (payment["id"],)))
+        for rid in sorted(refund_ids):
             refund = square.refund(rid)
             s.require(refund.get("payment_id") == payment["id"] and refund.get("amount_money", {}).get("currency") == "JPY", 503, "返金情報の確認が必要です。")
             refunds.append(refund)
@@ -140,6 +144,9 @@ def sync_subscription(c, subscription_id, square=None):
         pending_refund = any(r.get("status") in ("PENDING", "COMPLETED") for r in refunds)
         records.append({"id": payment["id"], "invoice": iid, "completed": timestamp(payment["created_at"]), "end": period_end(invoice, current), "refunded": int(refunded > 0 or pending_refund), "refunds": refunds})
     c.execute("BEGIN IMMEDIATE")
+    # Serialize writes for this subscription on Postgres too, before reading
+    # refund holds that a concurrent reconciliation might have committed.
+    c.execute("UPDATE svc_subscriptions SET checked_at=checked_at WHERE id=?", (subscription_id,))
     current_local = c.execute("SELECT provider_version FROM svc_subscriptions WHERE id=?", (subscription_id,)).fetchone()
     if current_local[0] > current.get("version", 0):
         c.commit()
@@ -148,11 +155,13 @@ def sync_subscription(c, subscription_id, square=None):
         old = c.execute("SELECT user_id,subscription_id FROM svc_payments WHERE id=?", (record["id"],)).fetchone()
         s.require(not old or (old[0] == local["user_id"] and old[1] == subscription_id), 409)
         c.execute("INSERT OR IGNORE INTO svc_payments(id,subscription_id,user_id,invoice_id,amount,currency,completed,period_end,refunded) VALUES(?,?,?,?,?,?,?,?,?)", (record["id"], subscription_id, local["user_id"], record["invoice"], 3000, "JPY", record["completed"], record["end"], record["refunded"]))
-        if record["refunded"]:
-            c.execute("UPDATE svc_payments SET refunded=1 WHERE id=?", (record["id"],))
         for refund in record["refunds"]:
             c.execute("INSERT OR IGNORE INTO svc_refunds(id,payment_id,amount,status,updated) VALUES(?,?,?,?,?)", (refund["id"], record["id"], refund["amount_money"]["amount"], refund["status"], s.stamp()))
-            c.execute("UPDATE svc_refunds SET status=?,updated=? WHERE id=?", (refund["status"], s.stamp(), refund["id"]))
+            c.execute("UPDATE svc_refunds SET status=CASE WHEN status='COMPLETED' THEN status ELSE ? END,updated=? WHERE id=?", (refund["status"], s.stamp(), refund["id"]))
+        # Include refunds committed by another sync after our provider reads.
+        # Failed/rejected attempts release the hold only if no other hold remains.
+        held = c.execute("SELECT 1 FROM svc_refunds WHERE payment_id=? AND status IN ('PENDING','COMPLETED') LIMIT 1", (record["id"],)).fetchone()
+        c.execute("UPDATE svc_payments SET refunded=? WHERE id=?", (int(record["refunded"] or bool(held)), record["id"]))
         total_refunded = c.execute("SELECT COALESCE(SUM(amount),0) FROM svc_refunds WHERE payment_id=? AND status='COMPLETED'", (record['id'],)).fetchone()[0]
         if total_refunded >= 3000:
             c.execute("UPDATE svc_refund_requests SET status='completed' WHERE payment_id=?", (record['id'],))
