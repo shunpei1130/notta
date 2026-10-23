@@ -366,7 +366,7 @@ class ServiceTest(unittest.TestCase):
         private=draft('非公開の企画の目的')
         search_response={'candidates':[{'content':{'parts':[{'text':'公開された事例です'}]},'groundingMetadata':{'webSearchQueries':['小冊子 共同制作'],'groundingChunks':[{'web':{'title':'公開事例','uri':'https://example.test'}}],'searchEntryPoint':{'renderedContent':'<p>Google</p>'}}}],'usageMetadata':{'promptTokenCount':10,'candidatesTokenCount':30}}
         model_response={'candidates':[{'finishReason':'STOP','content':{'parts':[{'text':json.dumps({'reply':'企画の案','draft':private})}]}}],'usageMetadata':{'promptTokenCount':500,'candidatesTokenCount':1000}}
-        with patch.dict(os.environ,{'GEMINI_API_KEY':'test-only','NOTTA_AI_ENABLED':'yes','NOTTA_SEARCH_LIMIT_VERIFIED':'yes'}),patch.object(providers,'request_json',side_effect=[search_response,model_response]) as transport:
+        with patch.dict(os.environ,{'GEMINI_API_KEY':'test-only','NOTTA_AI_ENABLED':'yes','NOTTA_SEARCH_LIMIT_VERIFIED':'yes'}),patch.object(providers,'request_json',side_effect=[{'totalTokens':100},search_response,{'totalTokens':1000},model_response]) as transport:
             result=providers.generate(private,[{'role':'user','body':'非公開の会話'}],'役割を考える','小冊子 共同制作')
         first=json.dumps(transport.call_args_list[0].kwargs['data'],ensure_ascii=False)
         self.assertNotIn('非公開',first)
