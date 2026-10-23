@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS account_tokens(token TEXT PRIMARY KEY,email TEXT NOT 
   cli_service.schema(c)
   import opencode_models
   opencode_models.schema(c)
+  import service_schema
+  service_schema.migrate(c)
 def seed():
  """Fictional accounts only, explicit CLI flag; never automatic external registration."""
  if DB_BACKEND!='sqlite':raise ValueError('Demo seed forbidden on PostgreSQL')
@@ -118,9 +120,17 @@ class Handler(BaseHTTPRequestHandler):
  def handle_request(self,method):
   try:
    self.origin();path=urlparse(self.path).path
+   import notta_service
+   service_mode=notta_service.enabled()
+   if service_mode and path.startswith('/api/'):
+    require(path.startswith('/api/service/'),404,'ページがありません。')
+    notta_service.dispatch(self,method,path);return
    if not path.startswith('/api/'):
     require(method=='GET',405)
     files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/loop.js':'loop.js','/connections.js':'connections.js','/proposal-review.js':'proposal-review.js','/opencode.js':'opencode.js','/motion.js':'motion.js'}
+    if service_mode:
+     files={'/service.js':'service.js','/service.css':'service.css'}
+     if path in ['/','/workspace','/billing/return','/terms','/privacy','/legal'] or re.fullmatch(r'/p/[A-Za-z0-9_-]{16}',path):files[path]='service.html'
     if path in files:p=HERE/'static'/files[path]
     else:
      # 同梱アセット（書体・3Dアイコン・Lottieプレイヤ・落款JSON）だけを配信する

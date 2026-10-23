@@ -4,6 +4,7 @@ tests/evidence/
 tests/tmp*/
 .env
 .env.*
+!.env.example
 *.sqlite*
 *.db
 *.pem
