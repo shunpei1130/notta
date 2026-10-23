@@ -2,7 +2,7 @@
 name = "notta"
 version = "3.5.0"
 requires-python = ">=3.12"
-dependencies = ["psycopg[binary]>=3.2,<4"]
+dependencies = ["psycopg[binary]>=3.2,<4", "stripe>=15.6.0,<16"]
 
 [tool.vercel]
-entrypoint = "production:application"
+entrypoint = "api.index:app"
