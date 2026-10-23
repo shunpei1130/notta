@@ -1,5 +1,5 @@
 {
   "version": 2,
-  "functions": {"api/index.py": {"maxDuration": 60, "includeFiles": ["static/**", "*.py", "opencode_inventory.json"]}},
+  "functions": {"api/index.py": {"maxDuration": 60, "includeFiles": "{static/**,*.py,opencode_inventory.json}", "excludeFiles": "{tests/**,data/**,.env*}"}},
   "routes": [{"src": "/(.*)", "dest": "/api/index.py"}]
 }
