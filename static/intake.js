@@ -18,7 +18,7 @@ window.nottaIntake = (() => {
 
   function landing() {
     document.title = 'ノッタ｜つくりたいを、みんなで。';
-    main(`<section class="hero"><div class="hero-copy"><p class="eyebrow">NOTTA / LET'S CREATE TOGETHER</p>
+    main(`<section class="hero intake-hero"><div class="hero-copy"><p class="eyebrow">NOTTA / LET'S CREATE TOGETHER</p>
       <h1>やってみたい。<br>でも、手が回らない。<br><em>その一歩を、みんなで。</em></h1>
       <p>まだ、ふわっとしたアイデアで大丈夫。<br>10問に答えたら、企画の概要とファンにお願いできるタスクを、ノッタの運営が整理してお届けします。</p>
       <form id="goal-form" class="goal-form"><label for="goal">どんな企画を、誰とつくりたいですか？</label>
