@@ -21,7 +21,7 @@ def main():
         dsn = os.getenv('NOTTA_DATABASE_URL', '')
     if not dsn or urlparse(dsn).hostname != args.expected_host:
         raise SystemExit('Target mismatch; no database changes performed')
-    tables = ['svc_accounts','svc_auth','svc_projects','svc_messages','svc_ai_requests','svc_budgets','svc_checkouts','svc_subscriptions','svc_payments','svc_refunds','svc_refund_requests','svc_webhooks','svc_events']
+    tables = ['svc_accounts','svc_auth','svc_projects','svc_messages','svc_ai_requests','svc_budgets','svc_checkouts','svc_subscriptions','svc_payments','svc_refunds','svc_refund_requests','svc_webhooks','svc_events','svc_intakes','svc_intake_turns','svc_intake_ai_requests','svc_intake_notifications']
     with Postgres(dsn) as connection:
         existing = connection.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'").fetchall()
         before = len(existing)
