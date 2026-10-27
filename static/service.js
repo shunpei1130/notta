@@ -76,8 +76,8 @@ function landing() {
       <article class="step"><p class="step-num">02</p><h3>自分の言葉に、整える</h3><p>企画概要と募集文を読み、自分で編集。保存した原稿は、あとから何度でも確認できます。</p></article>
       <article class="step"><p class="step-num">03</p><h3>仲間を迎えて、進める</h3><p>月額プランで募集ページを公開。応募者の比較、役割の分担、提出と確認まで進められます。</p></article></div></section>
     <section class="pricing" id="pricing"><div class="section"><div class="section-head"><h2>準備は無料。<br>一緒につくるなら、月額で。</h2><p>企画をつくっただけで請求されることはありません。ファン・協力者の参加は無料です。</p></div>
-      <div class="price-grid"><article class="price-card"><p class="plan-label">まずは、自分の企画で</p><h3 class="price">0<span>円</span></h3><p>企画と募集の原稿をつくる</p><ul><li>企画概要・達成条件・最初の成果物</li><li>役割2〜3種類と募集文</li><li>AIとの対話は10回、検索は1回まで</li><li>1人1企画。保存・手編集・コピー</li></ul><a href="#goal" class="button secondary">無料で企画をつくる</a><p class="hint">カード登録不要／初期の受付枠は30人まで</p></article>
-      <article class="price-card paid"><p class="plan-label">ファンと、一緒に進める</p><h3 class="price">3,000<span>円／月・税込総額</span></h3><p>募集公開から、成果の確認まで</p><ul><li>同時に1企画。完了後は次の企画へ</li><li>募集ページ公開・応募者の比較と担当決定</li><li>テキスト・URLで提出、確認と貢献記録</li><li>AIの対話100回・検索10回／契約月まで</li></ul><button class="button" data-action="workspace">まずは無料で企画をつくる</button><p class="hint">毎月自動更新／更新停止はマイページから<br>初回支払いから7日以内の申出で全額返金</p></article></div>
+      <div class="price-grid"><article class="price-card"><p class="plan-label">まずは、自分の企画で</p><h3 class="price">0<span>円</span></h3><p>企画と募集の原稿をつくる</p><ul><li>企画概要・達成条件・最初の成果物</li><li>役割2〜3種類と募集文</li><li>AIとの対話は10回${state.config.searchReady ? '、検索は1回まで' : 'まで。検索は準備中'}</li><li>1人1企画。保存・手編集・コピー</li></ul><a href="#goal" class="button secondary">無料で企画をつくる</a><p class="hint">カード登録不要／初期の受付枠は30人まで</p></article>
+      <article class="price-card paid"><p class="plan-label">ファンと、一緒に進める</p><h3 class="price">3,000<span>円／月・税込総額</span></h3><p>募集公開から、成果の確認まで</p><ul><li>同時に1企画。完了後は次の企画へ</li><li>募集ページ公開・応募者の比較と担当決定</li><li>テキスト・URLで提出、確認と貢献記録</li><li>AIの対話100回${state.config.searchReady ? '・検索10回／契約月まで' : '／契約月まで。検索は準備中'}</li></ul><button class="button" data-action="workspace">まずは無料で企画をつくる</button><p class="hint">毎月自動更新／更新停止はマイページから<br>初回支払いから7日以内の申出で全額返金</p></article></div>
       <p class="hint">人が企画を制作・運営する費用は含みません。集客、人数、成果は保証しません。AI・検索は利用上限内で提供し、受付枠は全体の利用状況に応じて調整します。</p></div></section>
     <section class="section"><div class="section-head"><h2>はじめる前に。</h2></div>
       <details class="faq"><summary>無料でどこまで試せますか？</summary><p>ご自身の企画を入力してAIと相談し、企画概要、達成条件、最初の成果物、役割、募集文を作成できます。保存・手編集・コピーも無料です。募集の公開と共同作業から月額プランが必要です。</p></details>
@@ -128,7 +128,7 @@ function codeForm(result, email, request, after) {
 }
 
 function contractDetails() {
-  return `<ul><li>月額3,000円（税込総額）。申込み時に初回決済、以後毎月自動更新。</li><li>同時に1企画。募集公開、応募者比較、担当決定、提出・確認・貢献記録。</li><li>AIとの対話は契約月100回、検索10回まで。企画制作や運営代行は別途相談。</li><li>マイページで次回更新を停止できます。支払済み期間の終了まで利用できます。</li><li>初回支払いから7日以内の申出で全額返金。返金時は有料機能を終了します。</li></ul>`;
+  return `<ul><li>月額3,000円（税込総額）。申込み時に初回決済、以後毎月自動更新。</li><li>同時に1企画。募集公開、応募者比較、担当決定、提出・確認・貢献記録。</li><li>AIとの対話は契約月100回${state.config.searchReady ? '、検索10回まで' : 'まで。検索は現在準備中です'}。企画制作や運営代行は別途相談。</li><li>マイページで次回更新を停止できます。支払済み期間の終了まで利用できます。</li><li>初回支払いから7日以内の申出で全額返金。返金時は有料機能を終了します。</li></ul>`;
 }
 async function offer() {
   if (!state.me) return auth(offer);
@@ -191,7 +191,7 @@ function fanApplication(a) {
 }
 
 const fields = [['title','企画の名前',80],['goal','企画の目的',1000],['success','達成したと判断する条件',1000],['output','最初につくる成果物',1000],['schedule','日程と進め方',1500],['conditions','参加条件・権利・報酬など',2000],['recruitment','募集文',3000]];
-function quotaText(q) { return `AIの対話 ${q.repliesUsed} / ${q.repliesLimit}回　検索 ${q.searchesUsed} / ${q.searchesLimit}回`; }
+function quotaText(q) { return `AIの対話 ${q.repliesUsed} / ${q.repliesLimit}回　${state.config.searchReady ? `検索 ${q.searchesUsed} / ${q.searchesLimit}回` : '検索は準備中'}`; }
 async function projectPage(id) {
   state.project = await api('/projects/' + id); state.dirty = false;
   const p = state.project, d = p.draft, locked = p.state === 'archived' || p.applications.length > 0;
@@ -295,7 +295,7 @@ function legalPage(kind) {
     privacy: ['プライバシーポリシー', `<p>2026年10月23日制定。MAORA株式会社（マオラ）は、ノッタにおいて以下のとおり個人情報を取り扱います。</p><h2>取得する情報と目的</h2><p>メールアドレス、表示名、認証の日時、企画・対話・応募・提出・確認内容、契約と支払いの状態を、本人認証、サービス提供、問い合わせ対応、請求管理に使用します。認証の不正利用を防ぐためIPアドレスを秘密鍵で変換した値と試行回数を記録します。画面の利用状況は、利用者ID・操作の種類・日時など必要最小限の情報で記録します。広告目的の追跡は行いません。</p><h2>公開される範囲</h2><p>下書き、AIとの会話、未確認メモは本人のみ閲覧できます。募集を公開すると、企画概要、条件、役割、募集文、表示名を公開します。応募内容・提出物・確認コメントは応募した本人と企画者に表示します。メールアドレスを募集ページや応募者一覧に表示することはありません。参加を取り消すと、確認済みの貢献記録を取り下げます。</p><h2>外部サービスへの送信</h2><p>AIとの相談では、企画原稿と相談内容をGoogleのGemini APIへ送信します。検索を選択した場合は、確認した検索語句のみをGoogle Searchへ送信します。メール送信にはResend、データ保存にはNeon、サイト配信にはVercelを利用します。各事業者が国外で処理する場合があります。決済はStripeが取り扱い、ノッタはカード番号やセキュリティコードを取得・保存しません。APIの利用枠や事業者の規約に従って処理します。秘密情報や不要な個人情報は入力しないでください。</p><h2>保管・安全管理</h2><p>通信を暗号化し、権限確認とログイン用Cookieを使用します。認証コードは10分で失効し、ハッシュとして保管します。会計記録など保存義務のある情報は必要な期間保管します。その他の情報はサービス提供に必要な範囲で保管し、退会・削除のご相談には本人確認のうえ対応します。アクセス情報の保管期間や削除の運用を変更する場合は、このページでお知らせします。</p><h2>開示・訂正・削除のお問い合わせ</h2><p>MAORA株式会社（マオラ）<br>東京都千代田区内神田1-9-12 J.NODE 内神田5階<br><a href="mailto:shumpei.hasegawa@maora.co.jp">shumpei.hasegawa@maora.co.jp</a></p>`],
     legal: ['特定商取引法に基づく表記', `<dl><dt>販売事業者</dt><dd>MAORA株式会社（マオラ）</dd><dt>運営責任者</dt><dd>長谷川峻平</dd><dt>所在地</dt><dd>東京都千代田区内神田1-9-12 J.NODE 内神田5階</dd><dt>連絡先</dt><dd><a href="mailto:shumpei.hasegawa@maora.co.jp">shumpei.hasegawa@maora.co.jp</a><br>${state.config.phone ? esc(state.config.phone) : '電話窓口は掲載準備中です。有料申込みの受付前に表示します。'}<br><a href="https://www.maora.co.jp/" target="_blank" rel="noopener noreferrer">会社公式サイト ↗</a></dd><dt>販売価格</dt><dd>月額3,000円（税込総額）。無料体験は0円です。</dd><dt>追加の費用</dt><dd>サービスの利用に必要な通信費はお客様のご負担です。制作や運営代行の個別相談は月額料金に含みません。</dd><dt>お支払方法・時期</dt><dd>Stripeによるカード決済。申込み時に初回決済、以後毎月自動更新します。同じ日がない月は月末を基準に更新します。</dd><dt>利用開始</dt><dd>決済の完了を確認した後、有料機能を利用できます。反映に時間がかかる場合は、追加購入せずお問い合わせください。</dd><dt>更新停止</dt><dd>マイページから次回の更新を停止できます。支払済み期間の終了まで有料機能を利用できます。</dd><dt>返金</dt><dd>初回支払いから7日以内にマイページまたはメールで申し出た場合、初回料金を全額返金します。返金は原則として元のお支払方法に行い、反映日はカード会社によって異なります。通常の更新停止は日割り返金を伴いません。</dd><dt>提供範囲</dt><dd>同時に1企画。企画準備、募集公開、応募比較、担当決定、文章・URLによる提出、確認と貢献記録。企画の集客や人による制作・運営代行は別途相談です。</dd><dt>利用環境</dt><dd>インターネットに接続できる、最新版のChrome・Safari・Edge等のブラウザー。無料体験で動作をお確かめください。</dd></dl>`]
   };
-  const [title, body] = pages[kind]; document.title = title + '｜ノッタ'; main(`<article class="legal-page"><p class="breadcrumb"><a href="/">ホーム</a></p><h1>${title}</h1>${body}</article>`);
+  const [title, body] = pages[kind]; document.title = title + '｜ノッタ'; main(`<article class="legal-page"><p class="breadcrumb"><a href="/">ホーム</a></p><h1>${title}</h1>${kind === 'terms' && !state.config.searchReady ? '<p class="banner">検索機能は現在準備中です。AIとの相談、原稿の保存・編集はご利用いただけます。</p>' : ''}${body}</article>`);
 }
 
 async function copyProject() {
