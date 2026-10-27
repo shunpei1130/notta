@@ -94,6 +94,7 @@ function landing() {
 }
 
 async function startProject(goal) {
+  if (state.config.intakeMode) return nottaIntake.start(goal);
   if (!state.config.aiReady) throw new Error('AIの接続を準備しています。入力した企画はこの画面に残っています。');
   const result = await api('/projects', {goal}); clearIntent(); navigate('/workspace#project=' + result.id);
 }
@@ -131,6 +132,7 @@ function contractDetails() {
   return `<ul><li>月額3,000円（税込総額）。申込み時に初回決済、以後毎月自動更新。</li><li>同時に1企画。募集公開、応募者比較、担当決定、提出・確認・貢献記録。</li><li>AIとの対話は契約月100回${state.config.searchReady ? '、検索10回まで' : 'まで。検索は現在準備中です'}。企画制作や運営代行は別途相談。</li><li>マイページで次回更新を停止できます。支払済み期間の終了まで利用できます。</li><li>初回支払いから7日以内の申出で全額返金。返金時は有料機能を終了します。</li></ul>`;
 }
 async function offer() {
+  if (state.config.intakeMode) { notice('現在は無料のヒアリングを受け付けています。'); return; }
   if (!state.me) return auth(offer);
   if (state.dirty) await saveProject();
   const dialog = $('#confirm-dialog');
@@ -144,12 +146,13 @@ async function offer() {
 }
 
 function billingView(billing) {
+  if (state.config.intakeMode && !billing.subscription && !billing.pending && !billing.refundRequest) return '';
   const sub = billing.subscription;
   return `<section class="billing-box" id="billing"><div class="list-heading"><h2>契約とお支払い</h2><span class="pill">${billing.paid ? '月額プラン' : '無料'}</span></div>
     ${sub ? `<p>状態：${esc(sub.refunded ? '返金に伴い利用終了' : sub.cancel_at ? '次回更新を停止' : billing.paid ? '利用中' : '支払い・契約を確認してください')}<br>支払済みの利用期間：${date(sub.paid_until)} まで${sub.cancel_at ? '<br>次回の自動更新はありません。' : ''}</p>` : '<p>企画の準備は無料です。募集の公開と共同作業から月額3,000円です。</p>'}
     ${billing.pending ? '<p class="banner warning">決済結果を確認しています。重複して申し込まず、下のボタンで状態を確認してください。</p>' : ''}
     ${billing.refundRequest ? `<p class="banner">${billing.refundRequest.status === 'completed' ? 'Stripeで全額返金の処理を確認しました。明細への反映日はカード会社によって異なります。' : `返金のお申出を受け付けています。受付日：${date(billing.refundRequest.requested)}。MAORAからメールでご連絡します。`}</p>` : ''}
-    <div class="toolbar">${!sub && !billing.pending ? '<button class="button compact" data-action="offer">月額プランの内容を見る</button>' : ''}
+    <div class="toolbar">${!state.config.intakeMode && !sub && !billing.pending ? '<button class="button compact" data-action="offer">月額プランの内容を見る</button>' : ''}
     ${state.config.billingReady && (sub || billing.pending) ? '<button class="button secondary compact" data-action="sync">支払い状態を確認</button>' : ''}
     ${billing.pendingUrl ? `<a class="button secondary compact" href="${esc(billing.pendingUrl)}" rel="noreferrer">未払いの申込みを再開 ↗</a><p class="hint">すでに支払った場合は再決済せず、支払い状態を確認してください。未払いの申込みを取り消したい場合はお問い合わせください。</p>` : ''}
     ${sub && billing.paid && !sub.cancel_at ? '<button class="button secondary compact" data-action="cancel-subscription">次回更新を停止する</button>' : ''}
@@ -170,7 +173,7 @@ function dashboard() {
   const me = state.me, active = me.projects.find(p => p.state !== 'archived');
   main(`<div class="workspace"><div class="workspace-top"><div><p class="eyebrow">YOUR PROJECTS</p><h1>${esc(me.user.name)}さんのマイページ</h1></div><button class="text-button" data-action="logout">ログアウト</button></div>
     ${location.pathname === '/billing/return' ? '<div class="banner"><strong>お支払いの状態を照合します。</strong>反映に少し時間がかかる場合があります。重複して申し込まず「支払い状態を確認」を押してください。</div>' : ''}
-    <section><div class="list-heading"><h2>自分の企画</h2>${!active ? '<button class="button secondary compact" data-action="new-project">企画をつくる</button>' : ''}</div>
+    <section><div class="list-heading"><h2>自分の企画</h2>${!active && !state.config.intakeMode ? '<button class="button secondary compact" data-action="new-project">企画をつくる</button>' : ''}</div>
     ${me.projects.length ? `<div class="project-list">${me.projects.map(p => `<article class="project-card"><span class="pill">${esc(p.state === 'published' ? '募集中' : p.state === 'archived' ? '完了' : '準備中・非公開')}</span><h3>${esc(p.title)}</h3><p>更新：${date(p.updated)}</p><a class="button secondary compact" href="/workspace#project=${p.id}">${p.state === 'archived' ? '企画と記録を見る' : '企画を開く'} →</a></article>`).join('')}</div>` : '<div class="empty">思いついたことを、まずひとつ。AIと企画や役割を整理できます。<br><a href="/#goal">無料で企画をつくる →</a></div>'}</section>
     <section class="dashboard-section"><h2>参加している企画</h2><p class="hint">参加者の利用は無料です。応募内容や提出物は、ご本人と企画者が確認できます。</p>
       ${me.applications.length ? `<div class="application-grid">${me.applications.map(fanApplication).join('')}</div>` : '<div class="empty">募集ページから応募すると、ここに参加状況が表示されます。</div>'}</section>
@@ -204,7 +207,7 @@ async function projectPage(id) {
     <form id="chat-form" class="chat-form"><label>相談したいこと<textarea name="prompt" maxlength="1500" required ${locked ? 'disabled' : ''} placeholder="例：初めて参加する人でも取り組みやすい役割にしたい">${p.messages.length ? '' : esc('この企画を具体化してください：' + d.goal)}</textarea></label>
     ${state.config.searchReady && !locked ? '<details><summary class="small">公開情報を検索して参考にする</summary><label class="hint">外部検索へ送る語句<input name="searchQuery" maxlength="160" placeholder="例：ZINE 小冊子 共同制作 事例"></label><label class="check-label"><input type="checkbox" name="search"><span>入力した検索語句をGoogle Searchへ送ることに同意します。個人名や連絡先などは含めないでください。</span></label></details>' : ''}
     <p class="quota-line">${quotaText(p.quota)}</p><p class="privacy-note">企画と会話の内容をGoogleのAIへ送信します。個人情報・秘密情報は入力しないでください。AIの案は、公開前にご自身で確認してください。</p><p class="form-error" role="alert"></p><p id="ai-progress" class="busy-indicator" role="status" hidden>企画を整理しています。画面を開いたままお待ちください…</p>
-    <button class="button" type="submit" ${locked || !state.config.aiReady || p.quota.repliesUsed >= p.quota.repliesLimit ? 'disabled' : ''}>${p.messages.length ? 'AIと相談する' : '最初の企画案をつくる'} ↗</button></form>
+    <button class="button" type="submit" ${state.config.intakeMode || locked || !state.config.aiReady || p.quota.repliesUsed >= p.quota.repliesLimit ? 'disabled' : ''}>${state.config.intakeMode ? '以前のAI相談は受付を停止しています' : p.messages.length ? 'AIと相談する' : '最初の企画案をつくる'} ↗</button></form>
     ${!state.config.aiReady ? '<p class="hint">AIの接続を準備しています。企画は保存されています。</p>' : ''}${sourcesView(d.sources)}</section>
     <section class="panel"><div class="panel-head"><h2>企画と募集の原稿</h2><span class="small muted">手編集は回数制限なし</span></div><form id="editor-form"><div class="editor-grid">${fields.map(([key,label,max]) => `<label>${label}${key === 'title' ? `<input name="${key}" maxlength="${max}" value="${esc(d[key])}" required ${locked ? 'readonly' : ''}>` : `<textarea name="${key}" maxlength="${max}" ${['goal','success'].includes(key) ? 'required' : ''} ${locked ? 'readonly' : ''} ${key === 'recruitment' ? 'class="long"' : ''}>${esc(d[key])}</textarea>`}${key === 'conditions' ? '<p class="field-note">報酬の有無、権利、連絡方法、参加条件を公開前に確認してください。</p>' : ''}</label>`).join('')}
     <div><label>協力してほしい役割（2〜3種類）</label><div id="role-editors">${Array.from({length:3}, (_,i) => `<div class="role-editor"><label>役割${i+1}<input name="role${i}" maxlength="80" value="${esc(d.roles[i]?.title || '')}" ${locked ? 'readonly' : ''} placeholder="役割の名前"></label><label>この役割でつくるもの<textarea name="roleOutput${i}" maxlength="500" ${locked ? 'readonly' : ''}>${esc(d.roles[i]?.output || '')}</textarea></label></div>`).join('')}</div></div>
@@ -290,6 +293,7 @@ function applyDialog(roleId) {
 }
 
 function legalPage(kind) {
+  if (state.config.intakeMode) return nottaIntake.legal(kind);
   const pages = {
     terms: ['利用規約', `<p>2026年10月23日制定。MAORA株式会社（以下「当社」）が提供するノッタをご利用になる前にお読みください。</p><h2>1. 提供するサービス</h2><p>企画の整理、AIとの対話、原稿の保存・編集、参加者の募集と共同作業を支援します。AIの出力には誤りや第三者の権利を侵害する内容が含まれる場合があります。ご自身で確認してご利用ください。集客、人数、収益、成果を保証しません。</p><h2>2. 無料体験と月額プラン</h2><p>無料体験は1人1企画、AIとの対話10回・検索1回が上限です。月額プランは総額3,000円（税込）で毎月自動更新し、同時に1企画を進められます。完了後に次の企画を作成できます。AIとの対話100回・検索10回を各契約月の上限として提供します。人による企画制作、集客や運営代行は含みません。初期の受付上限は無料30人・有料5人です。全体の利用枠に応じて新規受付を調整します。自動で有料へ移行することはありません。</p><h2>3. お支払い・更新停止・返金</h2><p>Stripeの決済ページでお支払いいただきます。申込み時に初回決済、以後毎月同じ日を基準に更新します。同じ日がない月は月末が基準です。マイページから次回更新を停止でき、支払済み期間の終了まで利用できます。初回支払いから7日以内にマイページまたは問い合わせ先へ申し出た場合、初回料金を全額返金します。返金時は有料機能の利用を終了します。通常の更新停止は日割り返金を伴いません。法令に基づく権利を制限するものではありません。</p><h2>4. 企画と参加</h2><p>公開、応募、担当決定、提出、成果確認は利用者ご自身が操作します。参加者の利用は無料です。企画者は日程、報酬の有無、成果物の権利、連絡方法などの条件を明確にし、参加者と合意してください。応募後は募集条件を固定します。成果の確認は企画者が行い、確認済みの内容を本人と企画者に表示します。参加者は応募・参加を取り消せます。</p><h2>5. 投稿とアカウント</h2><p>正しい連絡先を登録し、メールの確認コードを他人と共有しないでください。投稿の権利は利用者または正当な権利者に帰属します。当社には、本サービスの提供に必要な範囲で保存・処理・表示する権限を許諾いただきます。他人の権利侵害、違法行為、嫌がらせ、なりすまし、秘密情報・決済情報の投稿、不正アクセスや過度な利用を禁止します。本サービスは18歳以上の方がご利用いただけます。</p><h2>6. サービスの停止・責任</h2><p>保守、障害、不正利用、外部サービスの停止により、一時的に機能を制限する場合があります。事業者の故意・重過失など、法令上免責できない責任を免除するものではありません。重要な変更やサービス終了は、利用者への案内と未利用期間の対応を含めてお知らせします。</p><h2>7. お問い合わせ</h2><p>MAORA株式会社（マオラ）<br><a href="mailto:shumpei.hasegawa@maora.co.jp">shumpei.hasegawa@maora.co.jp</a></p>`],
     privacy: ['プライバシーポリシー', `<p>2026年10月23日制定。MAORA株式会社（マオラ）は、ノッタにおいて以下のとおり個人情報を取り扱います。</p><h2>取得する情報と目的</h2><p>メールアドレス、表示名、認証の日時、企画・対話・応募・提出・確認内容、契約と支払いの状態を、本人認証、サービス提供、問い合わせ対応、請求管理に使用します。認証の不正利用を防ぐためIPアドレスを秘密鍵で変換した値と試行回数を記録します。画面の利用状況は、利用者ID・操作の種類・日時など必要最小限の情報で記録します。広告目的の追跡は行いません。</p><h2>公開される範囲</h2><p>下書き、AIとの会話、未確認メモは本人のみ閲覧できます。募集を公開すると、企画概要、条件、役割、募集文、表示名を公開します。応募内容・提出物・確認コメントは応募した本人と企画者に表示します。メールアドレスを募集ページや応募者一覧に表示することはありません。参加を取り消すと、確認済みの貢献記録を取り下げます。</p><h2>外部サービスへの送信</h2><p>AIとの相談では、企画原稿と相談内容をGoogleのGemini APIへ送信します。検索を選択した場合は、確認した検索語句のみをGoogle Searchへ送信します。メール送信にはResend、データ保存にはNeon、サイト配信にはVercelを利用します。各事業者が国外で処理する場合があります。決済はStripeが取り扱い、ノッタはカード番号やセキュリティコードを取得・保存しません。APIの利用枠や事業者の規約に従って処理します。秘密情報や不要な個人情報は入力しないでください。</p><h2>保管・安全管理</h2><p>通信を暗号化し、権限確認とログイン用Cookieを使用します。認証コードは10分で失効し、ハッシュとして保管します。会計記録など保存義務のある情報は必要な期間保管します。その他の情報はサービス提供に必要な範囲で保管し、退会・削除のご相談には本人確認のうえ対応します。アクセス情報の保管期間や削除の運用を変更する場合は、このページでお知らせします。</p><h2>開示・訂正・削除のお問い合わせ</h2><p>MAORA株式会社（マオラ）<br>東京都千代田区内神田1-9-12 J.NODE 内神田5階<br><a href="mailto:shumpei.hasegawa@maora.co.jp">shumpei.hasegawa@maora.co.jp</a></p>`],
@@ -329,6 +333,8 @@ async function render() {
   const path = location.pathname;
   if (['/terms','/privacy','/legal'].includes(path)) return legalPage(path.slice(1));
   if (path.startsWith('/p/')) return publicPage(path.split('/')[2]);
+  const legacy = path === '/workspace' && state.me && (state.me.projects.length || state.me.applications.length || state.me.billing.subscription) && (new URLSearchParams(location.search).has('legacy') || new URLSearchParams(location.hash.slice(1)).has('project'));
+  if (state.config.intakeMode && !legacy) return nottaIntake.render(path);
   if (path === '/workspace' || path === '/billing/return') {
     if (!state.me) { main('<div class="error-page"><p class="eyebrow">YOUR WORKSPACE</p><h1>企画の続きを、ここから。</h1><p>メール認証でログインすると、保存した企画や参加状況を確認できます。</p><button class="button" id="workspace-login">ログインする</button></div>'); $('#workspace-login').addEventListener('click', () => auth(render)); return; }
     const id = new URLSearchParams(location.hash.slice(1)).get('project');
