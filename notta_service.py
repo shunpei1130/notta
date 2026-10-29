@@ -22,7 +22,7 @@ def public_sandbox():
 
 
 def configuration():
-    return {"mailReady": providers.mail_ready(), "aiReady": providers.ai_ready(),
+    return {"mailReady": providers.mail_ready(), "aiReady": providers.interview_ready() if intake.enabled() else providers.ai_ready(),
             "searchReady": providers.search_ready(), "billingReady": billing.ready(),
             "terms": "2026-10-intake-v1" if intake.enabled() else core.TERMS, "billingEnvironment": os.getenv("STRIPE_ENVIRONMENT", "sandbox"),
             "billingProvider": "stripe", "publicSandbox": public_sandbox(),

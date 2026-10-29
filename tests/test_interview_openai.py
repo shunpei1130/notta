@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import service_providers as providers
 import interview_openai as transport
 import service_intake as intake
+import notta_service
 import test_intake as intake_tests
 
 
@@ -121,6 +122,14 @@ class OpenAIInterviewTest(unittest.TestCase):
                 call.assert_not_called()
         with patch.dict(os.environ, {"GEMINI_API_KEY": "old-key"}):
             self.assertTrue(providers.ai_ready())
+
+    def test_public_ai_readiness_follows_the_active_intake_provider(self):
+        with patch.dict(os.environ, {"NOTTA_INTAKE_ENABLED": "yes"}):
+            self.assertTrue(notta_service.configuration()["aiReady"])
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "", "GEMINI_API_KEY": "legacy-key"}):
+                self.assertFalse(notta_service.configuration()["aiReady"])
+                with patch.dict(os.environ, {"NOTTA_INTAKE_ENABLED": "no"}):
+                    self.assertTrue(notta_service.configuration()["aiReady"])
 
 
 class OpenAIIntakeFlowTest(intake_tests.IntakeTest):
