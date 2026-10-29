@@ -12,6 +12,29 @@ window.nottaIntake = (() => {
   const emptyTask = () => ({title:'', instructions:'', role:'', estimate:'', completion:''});
   let adminItem = null, adminDraft = null;
 
+  const cases = [
+    {title:'ラーメン屋を開きたい',total:25,description:'物件探しから仕入れ、お店づくりまで。得意なことを持ち寄って、一杯を届けるお店をつくります。',roles:[['資金提供者',8,'開業資金を支える'],['麺仕入れ係',2,'麺の選定と仕入れ'],['食材仕入れ係',3,'スープや具材の調達'],['空き物件提供者（不動産屋）',1,'店舗候補の紹介'],['内装担当',4,'店内の設計と施工'],['接客・運営',4,'接客と店舗運営'],['広報',3,'開店のお知らせと発信']]},
+    {title:'空き家をカフェにしたい',total:18,description:'使われていない家を、地域の人が集まれるカフェへ。改装から日々の運営まで協力します。',roles:[['資金提供者',5,'改装・開業資金を支える'],['空き家提供者',1,'カフェに使う場所の提供'],['改装担当',4,'空間の整備と内装'],['コーヒー・食材仕入れ係',2,'豆と食材の調達'],['接客・運営',4,'メニュー提供と店舗運営'],['広報',2,'地域へのお知らせ']]},
+    {title:'地元で音楽フェスを開きたい',total:40,description:'地元の音楽と人が出会う一日を。出演者だけでなく、会場づくりや当日の案内もみんなで担います。',roles:[['資金提供者',8,'開催費用を支える'],['会場提供者',2,'開催場所の提供と調整'],['出演者',10,'演奏とパフォーマンス'],['音響・照明',4,'音と照明の準備・操作'],['設営',6,'ステージと会場の設営'],['当日運営',6,'受付と来場者の案内'],['広報',4,'告知と情報発信']]},
+    {title:'自分のブランドの服をつくりたい',total:16,description:'アイデアを、実際に着られる服へ。デザインから縫製、撮影、販売まで、それぞれの得意をつなぎます。',roles:[['資金提供者',4,'制作資金を支える'],['デザイン担当',2,'服のデザインと仕様づくり'],['生地仕入れ係',2,'素材選びと調達'],['縫製担当',3,'試作と製品の縫製'],['撮影担当',2,'商品写真の撮影'],['販売・広報',3,'販売準備とブランドの発信']]}
+  ];
+
+  function openCase(index, trigger) {
+    const c = cases[index];
+    if (!c) return;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'case-dialog';
+    dialog.setAttribute('aria-labelledby', 'case-title');
+    dialog.innerHTML = `<button class="dialog-close" type="button" aria-label="閉じる" autofocus>×</button><span class="sample-label">モデルケース</span><h2 id="case-title">${esc(c.title)}</h2><p class="dialog-lead">${esc(c.description)}</p><p class="case-total">参加者 <strong>${c.total}</strong> 名</p><h3>参加者の内訳</h3><dl class="case-roles">${c.roles.map(([role,count,task]) => `<div><dt>${esc(role)} <b>${count}名</b></dt><dd>${esc(task)}</dd></div>`).join('')}</dl><p class="hint">企画・参加人数・役割は架空のモデルケースです。</p>`;
+    const overflow = document.body.style.overflow;
+    document.body.append(dialog);
+    dialog.addEventListener('close', () => { document.body.style.overflow = overflow; dialog.remove(); if (trigger.isConnected) trigger.focus(); }, {once:true});
+    dialog.querySelector('button').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('click', event => { const r = dialog.getBoundingClientRect(); if (event.target === dialog && (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom)) dialog.close(); });
+    document.body.style.overflow = 'hidden';
+    dialog.showModal();
+  }
+
   function accountTools() {
     return `<div class="toolbar">${state.me?.operator ? '<a class="button secondary compact" href="/admin/intakes">運営画面</a>' : ''}<button class="text-button" data-action="logout">ログアウト</button></div>`;
   }
@@ -26,12 +49,7 @@ window.nottaIntake = (() => {
       <p class="form-error" role="alert"></p><button class="button" type="submit">無料でヒアリングをはじめる <span aria-hidden="true">→</span></button>
       <p class="hint">メール認証のあと、1問ずつお聞きします。未定でも大丈夫。<br>初回は1人1企画・無料・カード登録不要</p></form>
       ${state.me?.intake ? '<p class="hint"><a href="/intakes/' + esc(state.me.intake.id) + '">受付済みの企画の続きを見る →</a></p>' : ''}</div>
-      <aside class="example-board" aria-label="届くタスク分解の例"><div class="board-caption"><span>たとえば、ファンと写真展をつくるなら</span><span class="sample-label">完成イメージ</span></div>
-      <div class="paper"><span class="pill">運営が企画を整理します</span><h3>まずは、小さな展示から。</h3>
-      <div class="paper-row"><strong>最初の一歩</strong><span>展示のテーマと、写真10点を決める</span></div>
-      <div class="paper-row"><strong>みんなで</strong><span>写真を選ぶ／紹介文を書く／会場候補を調べる</span></div>
-      <div class="paper-row"><strong>ひとつずつ</strong><span>作業内容・担当の目安・かかる時間・完成の条件</span></div></div>
-      <p class="hint">これはサンプルです。あなたの回答に合わせて整理します。</p></aside></section>
+      <aside class="example-board case-board" aria-labelledby="cases-title"><div class="board-caption"><h2 id="cases-title">過去事例</h2></div><p class="hint">みんなの力を持ち寄る、4つのモデルケース。企画と人数は架空の設定です。</p><div class="case-grid">${cases.map((c,i) => `<button type="button" class="case-card" data-case="${i}" aria-haspopup="dialog"><span class="sample-label">モデルケース</span><strong>${esc(c.title)}</strong><span>参加者 <b>${c.total}</b> 名</span><span class="case-link">内訳を見る →</span></button>`).join('')}</div></aside></section>
       <div class="intro-strip"><span><b>01</b> 思いついたことをそのまま入力</span><span><b>02</b> 10問にひとつずつ回答</span><span><b>03</b> 数時間後、メールでお知らせ</span></div>
       <section class="section" id="how"><div class="section-head"><h2>「何からやれば？」を、<br>小さなタスクに。</h2><p>初期版では、ヒアリングをAIが担当し、タスク分解は運営が行います。</p></div>
       <div class="steps"><article class="step"><p class="step-num">01</p><h3>やりたいことを話す</h3><p>メール認証でログインしたら、チャットが開きます。目的や日程、手伝ってほしいことなどを1問ずつお聞きします。</p></article>
@@ -42,6 +60,7 @@ window.nottaIntake = (() => {
       <section class="section"><h2>はじめる前に。</h2><details class="faq"><summary>何も決まっていなくても使えますか？</summary><p>はい。「未定」「おまかせ」でも回答できます。最後の10問目は自由記入で、空欄のまま送信できます。</p></details>
       <details class="faq"><summary>途中で閉じても大丈夫ですか？</summary><p>送信した回答は保存されます。同じメールアドレスでログインすると、続きから回答できます。まだ送信していない入力内容は、同じブラウザーのタブに一時保存します。</p></details>
       <details class="faq"><summary>企画は公開されますか？</summary><p>このヒアリングと完成した結果を確認できるのは、ご本人とノッタの運営だけです。ファンに公開する機能は、今後整えていきます。</p></details></section>`);
+    document.querySelectorAll('[data-case]').forEach(button => button.addEventListener('click', () => openCase(Number(button.dataset.case), button)));
     $('#goal-form').addEventListener('submit', event => {
       event.preventDefault();
       const form = event.currentTarget, goal = form.elements.goal.value.trim();
