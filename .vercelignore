@@ -1,0 +1,11 @@
+.git
+.vercel
+.env*
+data
+tests
+**/__pycache__
+**/*.pyc
+*.sqlite*
+*.db
+*.pem
+*.key
