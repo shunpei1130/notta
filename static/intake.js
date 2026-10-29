@@ -49,14 +49,16 @@ window.nottaIntake = (() => {
       busy($('button', form), async () => {
         if (!state.me) return auth(() => start(goal));
         await start(goal);
-      }, $('.form-error', form));
+      }, $('.form-error', form), state.me ? '最初の質問を用意しています' : undefined);
     });
   }
 
   async function start(goal) {
-    const result = await api('/intakes', {goal});
-    clearIntent();
-    navigate('/intakes/' + result.id);
+    return nottaWait.run('最初の質問を用意しています', async () => {
+      const result = await api('/intakes', {goal});
+      clearIntent();
+      navigate('/intakes/' + result.id);
+    });
   }
 
   function login(path) {
@@ -90,7 +92,7 @@ window.nottaIntake = (() => {
     $('#refresh-intake').addEventListener('click', () => busy($('#refresh-intake'), async () => {
       writeLocal(key, {value:field.value, requestId:readLocal(key)?.requestId});
       await render(location.pathname);
-    }));
+    }, null, '保存した内容を確認しています'));
     form.addEventListener('submit', event => {
       event.preventDefault();
       busy($('button[type=submit]', form), async () => {
@@ -103,7 +105,7 @@ window.nottaIntake = (() => {
           const result = await api('/intakes/' + item.id + '/answers', {step:item.step, answer:value, version:item.version, questionHash:turn.questionHash, requestId});
           clearLocal(key); state.dirty = false; show(result);
         } catch (error) {
-          $('#answer-status').textContent = '';
+          if ($('#answer-status')) $('#answer-status').textContent = '';
           if (error.status === 401 || error.status === 403) {
             auth(async () => { state.dirty = false; await render(location.pathname); });
           }
@@ -112,7 +114,7 @@ window.nottaIntake = (() => {
           }
           throw error;
         } finally { state.busy = false; }
-      }, $('.form-error', form));
+      }, $('.form-error', form), item.step === 10 ? '回答を送信しています' : '回答を保存して、次の質問を用意しています');
     });
     $('#current-question').focus();
   }
@@ -265,6 +267,7 @@ window.nottaIntake = (() => {
       }
       main('<div class="error-page"><h1>ページが見つかりません。</h1><a href="/workspace">マイページへ</a></div>');
     } catch (error) {
+      if (error.waitTimeout) throw error;
       if (error.status === 401) { state.me = null; return login(path); }
       main('<div class="error-page"><h1>このページを開けませんでした。</h1><p>' + esc(error.message) + '</p><a href="/workspace">マイページへ</a></div>');
     }

@@ -8,10 +8,13 @@
   <title>ノッタ｜つくりたいを、みんなで。</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/service.css">
+  <link rel="stylesheet" href="/wait.css">
+  <script src="/wait.js" defer></script>
   <script src="/intake.js" defer></script>
   <script src="/service.js" defer></script>
 </head>
 <body>
+  <div id="boot-wait" class="wait-boot" role="status"><div class="wait-card"><span class="wait-spinner" aria-hidden="true"></span><p>画面を準備しています</p><small>画面はそのままでお待ちください。</small></div></div>
   <a href="#main" class="skip">本文へ移動</a>
   <header class="site-header">
     <a class="brand" href="/" aria-label="ノッタ ホーム"><span class="brand-stamp" aria-hidden="true">の</span>ノッタ<span class="brand-note">みんなで、ひとつ先へ。</span></a>
@@ -28,5 +31,6 @@
   <div id="notice" class="toast" role="status" aria-live="polite" hidden></div>
   <dialog id="auth-dialog" aria-labelledby="auth-title"><button class="dialog-close" type="button" aria-label="閉じる" data-close>×</button><div id="auth-content"></div></dialog>
   <dialog id="confirm-dialog" aria-labelledby="confirm-title"><button class="dialog-close" type="button" aria-label="閉じる" data-close>×</button><div id="confirm-content"></div></dialog>
+  <dialog id="wait-dialog" class="wait-dialog" aria-labelledby="wait-title" aria-describedby="wait-detail" tabindex="-1"><div class="wait-card" role="status" aria-live="polite" aria-atomic="true"><span class="wait-spinner" aria-hidden="true"></span><h2 id="wait-title">画面を準備しています</h2><p id="wait-detail">画面はそのままでお待ちください。</p></div></dialog>
 </body>
 </html>

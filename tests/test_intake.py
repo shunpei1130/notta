@@ -261,7 +261,7 @@ class IntakeTest(unittest.TestCase):
         for path in ("/api/service/projects", "/api/service/billing/checkout", "/api/service/projects/" + s.ident() + "/assist"):
             with self.subTest(path=path):
                 self.assertEqual(self.request("POST", path)["status"], 409)
-        for path in ("/intake.js", "/intakes/" + item["id"], "/admin/intakes/" + item["id"]):
+        for path in ("/intake.js", "/wait.js", "/wait.css", "/intakes/" + item["id"], "/admin/intakes/" + item["id"]):
             self.assertEqual(self.request("GET", path)["status"], 200)
         me = json.loads(self.request("GET", "/api/service/me")["body"])
         self.assertEqual(me["intake"]["id"], item["id"])

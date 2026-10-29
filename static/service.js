@@ -17,21 +17,26 @@ function notice(message, error = false) {
   clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { box.hidden = true; }, error ? 12000 : 6000);
 }
 async function api(path, data) {
+  const operation = nottaWait.current;
+  nottaWait.check(operation);
   let response;
   try { response = await fetch('/api/service' + path, {method: data === undefined ? 'GET' : 'POST', credentials: 'same-origin',
-    headers: data === undefined ? {} : {'Content-Type':'application/json','X-CSRF-Token':state.me?.csrf || ''}, body: data === undefined ? undefined : JSON.stringify(data)}); }
-  catch { throw new Error('処理が完了したか確認できませんでした。再送する前に、保存内容や支払いの状態を確認してください。'); }
+    headers: data === undefined ? {} : {'Content-Type':'application/json','X-CSRF-Token':state.me?.csrf || ''}, body: data === undefined ? undefined : JSON.stringify(data), signal:operation?.controller.signal}); }
+  catch { nottaWait.check(operation); throw new Error('処理が完了したか確認できませんでした。再送する前に、保存内容や支払いの状態を確認してください。'); }
   let result;
-  try { result = await response.json(); } catch { throw new Error('処理が完了したか確認できませんでした。再送する前に、保存内容や契約の状態を確認してください。'); }
+  try { result = await response.json(); } catch { nottaWait.check(operation); throw new Error('処理が完了したか確認できませんでした。再送する前に、保存内容や契約の状態を確認してください。'); }
+  nottaWait.check(operation);
   if (!response.ok) { const error = new Error(result.error || '操作を完了できませんでした。'); error.status = response.status; throw error; }
   return result;
 }
-async function busy(button, task, target) {
-  if (button?.disabled) return;
+async function busy(button, task, target, waiting) {
+  if (button?.disabled || nottaWait.current) return;
   if (button) button.disabled = true;
   if (target) target.textContent = '';
-  try { return await task(); } catch (error) {
+  try { return await (waiting ? nottaWait.run(waiting, task) : task()); } catch (error) {
     if (target) target.textContent = error.message; else notice(error.message, true);
+    if (waiting && (!error.status || !target?.isConnected || target.closest('dialog')?.open === false)) nottaWait.recover(error, () => render());
+    else if (target?.isConnected) { target.tabIndex = -1; target.focus(); }
   } finally { if (button?.isConnected) button.disabled = false; }
 }
 const date = value => value ? new Date(value * 1000).toLocaleDateString('ja-JP', {timeZone:'Asia/Tokyo',year:'numeric',month:'long',day:'numeric'}) : '確認中';
@@ -51,7 +56,7 @@ function sandboxNotice() {
   banner.textContent = '検証用サイトです。決済はテストのみで、実際の請求はありません。';
   document.body.prepend(banner);
 }
-function navigate(path) { state.dirty = false; location.href = path; }
+function navigate(path) { state.dirty = false; nottaWait.navigating(path); location.href = path; }
 
 function landing() {
   document.title = 'ノッタ｜つくりたいを、みんなで。';
@@ -112,7 +117,7 @@ function auth(after = () => navigate('/workspace')) {
     busy($('button[type=submit]', form), async () => {
       const email = values.get('email').trim(); const request = {email, name:values.get('name').trim(), consent:values.get('consent') === 'on'};
       const result = await api('/auth/start', request); codeForm(result, email, request, after);
-    }, $('.form-error', form));
+    }, $('.form-error', form), '確認コードを送信しています');
   });
 }
 function codeForm(result, email, request, after) {
@@ -122,9 +127,9 @@ function codeForm(result, email, request, after) {
     <div class="dialog-footer"><button class="text-button" id="resend-code">メールを再送する</button><button class="text-button" id="change-email">メールアドレスを変更</button><p class="hint">確認コードの有効期間は10分です。メールが届かない場合は迷惑メールも確認してください。</p></div>`;
   $('[name=code]', $('#code-form')).focus();
   $('#code-form').addEventListener('submit', event => { event.preventDefault(); const form = event.currentTarget;
-    busy($('button', form), async () => { await api('/auth/verify', {challenge:result.challenge, code:form.elements.code.value}); await refreshMe(); $('#auth-dialog').close(); await after(); }, $('.form-error', form));
+    busy($('button', form), async () => { await api('/auth/verify', {challenge:result.challenge, code:form.elements.code.value}); await refreshMe(); nottaWait.message('画面を準備しています'); $('#auth-dialog').close(); await after(); }, $('.form-error', form), 'ログインを確認しています');
   });
-  $('#resend-code').addEventListener('click', event => busy(event.currentTarget, async () => { const next = await api('/auth/start', request); codeForm(next, email, request, after); notice('確認メールを再送しました。'); }));
+  $('#resend-code').addEventListener('click', event => busy(event.currentTarget, async () => { const next = await api('/auth/start', request); codeForm(next, email, request, after); notice('確認メールを再送しました。'); }, null, '確認コードを送信しています'));
   $('#change-email').addEventListener('click', () => auth(after));
 }
 
@@ -344,7 +349,7 @@ async function render() {
   landing();
 }
 async function boot() {
-  try { state.config = await api('/config'); sandboxNotice(); await render(); }
-  catch (error) { main(`<div class="error-page"><h1>画面を開けませんでした。</h1><p>${esc(error.message)}</p><a href="/" class="button secondary">ホームに戻る</a></div>`); }
+  try { await nottaWait.run('画面を準備しています', async () => { state.config = await api('/config'); sandboxNotice(); await render(); }); }
+  catch (error) { main(`<div class="error-page"><h1>画面を開けませんでした。</h1><p>${esc(error.message)}</p><a href="/" class="button secondary">ホームに戻る</a></div>`); nottaWait.recover(error, async () => { state.config = await api('/config'); await render(); }); }
 }
 boot();
