@@ -93,6 +93,7 @@ def main():
         page.locator('[name=name]').fill('確認用')
         page.locator('[name=consent]').check()
         page.locator('#auth-form button[type=submit]').click()
+        expect(page.locator('[name=code]')).to_be_focused()
         page.locator('[name=code]').fill('123456')
         page.locator('#code-form button').click()
         expect(page.locator('#wait-title')).to_have_text('ログインを確認しています')
@@ -150,6 +151,7 @@ def main():
             expect(page.locator('#intake-answer')).to_have_value('写真を展示したい')
             if status == 401:
                 expect(page.locator('#auth-dialog')).to_be_visible()
+                expect(page.locator('[name=email]')).to_be_focused()
             assert page.evaluate("mock.calls.filter(x=>x.path.endsWith('/answers')).length") == 1
             checks.append(f'HTTP {status}, input retained, no retry')
             page.close()

@@ -26,7 +26,8 @@ window.nottaWait = (() => {
       active = null; dialog.close();
       document.documentElement.classList.remove('is-waiting');
       document.querySelector('#main').removeAttribute('aria-busy');
-      const focus = document.querySelector('#current-question') || document.querySelector('#main h1');
+      const auth = document.querySelector('#auth-dialog[open]');
+      const focus = auth?.querySelector('[name=code], [name=email]') || document.querySelector('#current-question') || document.querySelector('#main h1');
       if (focus) { focus.tabIndex = -1; focus.focus({preventScroll:true}); }
     }
     const slow = setTimeout(() => { if (active === op) detail.textContent = '通常より時間がかかっています。このままお待ちください。'; }, 10000);
