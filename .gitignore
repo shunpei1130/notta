@@ -9,4 +9,5 @@ tests/tmp*/
 *.db
 *.pem
 *.key
+.vercel/
 履歴*/

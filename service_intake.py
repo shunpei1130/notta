@@ -95,7 +95,7 @@ def _prepare_turn(c, intake_id, number):
     topic, fallback = TOPICS[number - 1]
     c.execute("INSERT OR IGNORE INTO svc_intake_turns(intake_id,number,theme,question) VALUES(?,?,?,?)",
               (intake_id, number, topic, fallback))
-    if number == 10 or not providers.ai_ready():
+    if number == 10 or not providers.interview_ready():
         return None
     if c.execute("SELECT 1 FROM svc_intake_ai_requests WHERE intake_id=? AND number=?", (intake_id, number)).fetchone():
         return None

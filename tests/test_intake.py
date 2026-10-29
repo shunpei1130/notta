@@ -31,7 +31,7 @@ class IntakeTest(unittest.TestCase):
         self.c.commit()
         self.mode = patch.dict(os.environ, {"NOTTA_INTAKE_ENABLED": "yes"})
         self.mode.start()
-        self.ai_ready = patch.object(providers, "ai_ready", return_value=True)
+        self.ai_ready = patch.object(providers, "interview_ready", return_value=True)
         self.ai_ready.start()
         self.generate = patch.object(providers, "interview_question",
                                      side_effect=lambda goal, history, theme, number: {"question": str(number) + ". " + theme + "について教えてください。", "cost_yen": 2}).start()
@@ -128,7 +128,7 @@ class IntakeTest(unittest.TestCase):
         self.assertEqual(self.c.execute("SELECT reserved_yen FROM svc_budgets").fetchone()[0], 10)
 
     def test_missing_ai_still_accepts_and_does_not_retroactively_generate(self):
-        with patch.object(providers, "ai_ready", return_value=False):
+        with patch.object(providers, "interview_ready", return_value=False):
             item = self.start()
         self.assertEqual(item["turns"][0]["question"], intake.TOPICS[0][1])
         for _ in range(3):
@@ -144,7 +144,7 @@ class IntakeTest(unittest.TestCase):
                 item = intake.summary(other, self.uid)
                 visible = intake.detail(other, self.uid, item["id"])
                 self.assertEqual(visible["turns"][0]["question"], intake.TOPICS[0][1])
-                with patch.object(providers, "ai_ready", return_value=False):
+                with patch.object(providers, "interview_ready", return_value=False):
                     intake.answer(other, self.uid, item["id"], self.response(visible))
             return {"question": "遅れて戻った質問", "cost_yen": 1}
         self.generate.side_effect = concurrent

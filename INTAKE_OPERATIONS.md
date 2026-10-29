@@ -1,6 +1,6 @@
 # 初期版ヒアリングの運用
 
-2026年10月27日の方針。営業メール、営業の定期送信、追客は停止中です。プロダクトの公開をもって営業を再開しません。
+2026年10月29日更新。営業メール、営業の定期送信、追客は停止中です。プロダクトの公開をもって営業を再開しません。
 
 ## 利用者の流れ
 
@@ -42,9 +42,22 @@
 - 月2,000円の実消費と予約額で判定。旧プランの有料枠2,000円の事前確保によってヒアリングを止めない。
 - 1回10円を先に予約。入出力を計測し、確定した費用だけを消費へ移す。結果不明なら予約額を残し、同じ質問を再生成しない。
 - AI停止、入力上限、利用枠到達、接続失敗時も保存済みの定型質問で続行できる。GET・再読込では生成しない。
-- gemini-3.5-flash-lite、入力32,768 token以内、出力800 token以内、thinkingLevel=minimal。数値のthinkingBudget=0は使わない。
+- `NOTTA_INTERVIEW_PROVIDER=openai` では OpenAI Responses API の `gpt-6-luna`、`reasoning.effort=medium` を使用する。`OPENAI_API_KEY` と `NOTTA_AI_ENABLED=yes` が必要。キーは専用の秘密設定に保存する。
+- 入力は `/v1/responses/input_tokens` で事前計測し32,768 token以内。出力上限は推論を含む4,096 token、質問は600文字以内。計測5秒・生成40秒、`store:false`、ツールなし、再送なし。計測失敗時は生成しない。
+- OpenAIの台帳費用は入力を最大単価$0.125/百万token（通常入力$0.10、キャッシュ書込$0.125）、出力を$0.50/百万tokenで見積もり、250円/USDで換算して最低1円へ切り上げる。出力tokenは推論を含むため二重加算しない。現上限で1回最大2円、予約は10円を維持する。これは請求確定額ではない。
+- 成功時にはモデル、推論強度、入出力・推論token、台帳費用だけを運用ログへ記録する。質問・回答・キーは記録しない。拒否、不完全応答、利用量不明、生成中の通信切断はunknownとして10円予約を残す。自動的にGeminiへ再送しない。
+- 未設定または `NOTTA_INTERVIEW_PROVIDER=gemini` は従来の `gemini-3.5-flash-lite`、入力32,768 token・出力800 token、thinkingLevel=minimalを使用する。Gemini用の `GEMINI_API_KEY` が必要。不明な設定値では定型質問を使う。旧プラン用Gemini・検索の接続判定は質問生成と独立している。
+- 切り替えは新規の質問生成だけに適用する。保存済みの質問・回答、台帳は変更しない。GET・再ログイン・再送で過去の質問を生成し直さない。DBの追加移行は不要。
 
-参考：[Googleのthinking設定](https://ai.google.dev/gemini-api/docs/generate-content/thinking)
+参考：[GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)、[トークン計測](https://developers.openai.com/api/docs/guides/token-counting)
+
+## OpenAIへの切り替えと切り戻し
+
+1. 専用キーの作成先と保存先を安全な設定画面で確定し、検証環境と本番の秘密設定へ保存する。キーをソース・ログへ出さない。
+2. ローカルの全テストと、架空の企画での実生成1回を確認する。モデルが利用不可、残高不足、JSON・利用量が不正なら本番切り替えを行わない。
+3. 対象が既存Vercel `notta` のproductionであることを照合し、検証したコミット・送信先を明記したプライバシーポリシー・`NOTTA_INTERVIEW_PROVIDER=openai` を同時に反映する。
+4. 本番反映後、最初の新規生成の `interview_ai_usage` ログと台帳を照合する。確認のために既存の利用者の回答を送信・再生成しない。新しい生成がまだなければ、この確認は未実施と記録する。
+5. 問題時は `NOTTA_INTERVIEW_PROVIDER=gemini` の設定で再デプロイする。既存のキー、保存済み質問、回答、予約を保持する。Googleの月額上限はOpenAIに適用されないため、OpenAI側の利用額とアプリの月2,000円上限を併せて確認する。
 
 ## 反映と戻し方
 

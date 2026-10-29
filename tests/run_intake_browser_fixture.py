@@ -18,7 +18,7 @@ os.environ.update(NOTTA_SERVICE_ENABLED="yes", NOTTA_INTAKE_ENABLED="yes",
                   NOTTA_AUTH_SECRET=secrets.token_urlsafe(40),
                   NOTTA_PUBLIC_ORIGIN="http://127.0.0.1:8880")
 providers.mail_ready = lambda: True
-providers.ai_ready = lambda: True
+providers.interview_ready = lambda: True
 providers.search_ready = lambda: False
 
 
