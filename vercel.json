@@ -1,5 +1,8 @@
 {
   "version": 2,
-  "functions": {"api/index.py": {"maxDuration": 60, "includeFiles": "{static/**,*.py,opencode_inventory.json}", "excludeFiles": "{tests/**,data/**,.env*}"}},
-  "routes": [{"src": "/(.*)", "dest": "/api/index.py"}]
+  "functions": {"api/index.py": {"maxDuration": 60, "includeFiles": "{static/**,*.py,opencode_inventory.json}", "excludeFiles": "{tests/**,data/**,.env*,static/assets/notta-intro*}"}},
+  "routes": [
+    {"src": "/assets/(notta-intro\\.mp4|notta-intro-poster\\.jpg)", "dest": "/static/assets/$1"},
+    {"src": "/(.*)", "dest": "/api/index.py"}
+  ]
 }

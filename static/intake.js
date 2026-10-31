@@ -49,6 +49,7 @@ window.nottaIntake = (() => {
       <p class="form-error" role="alert"></p><button class="button" type="submit">無料でヒアリングをはじめる <span aria-hidden="true">→</span></button>
       <p class="hint">メール認証のあと、1問ずつお聞きします。未定でも大丈夫。<br>初回は1人1企画・無料・カード登録不要</p></form>
       ${state.me?.intake ? '<p class="hint"><a href="/intakes/' + esc(state.me.intake.id) + '">受付済みの企画の続きを見る →</a></p>' : ''}</div>
+      <section class="intro-video" aria-labelledby="intro-video-title"><h2 id="intro-video-title">動画で見る、ノッタの使い方</h2><video controls playsinline preload="none" poster="/assets/notta-intro-poster.jpg" width="1920" height="1080" aria-label="ノッタ紹介動画"><source src="/assets/notta-intro.mp4" type="video/mp4">動画を再生できない場合は、<a href="/assets/notta-intro.mp4">紹介動画を開く</a>をご利用ください。</video></section>
       <aside class="example-board case-board" aria-labelledby="cases-title"><div class="board-caption"><h2 id="cases-title">過去事例</h2></div><p class="hint">みんなの力を持ち寄る、4つのモデルケース。企画と人数は架空の設定です。</p><div class="case-grid">${cases.map((c,i) => `<button type="button" class="case-card" data-case="${i}" aria-haspopup="dialog"><span class="sample-label">モデルケース</span><strong>${esc(c.title)}</strong><span>参加者 <b>${c.total}</b> 名</span><span class="case-link">内訳を見る →</span></button>`).join('')}</div></aside></section>
       <div class="intro-strip"><span><b>01</b> 思いついたことをそのまま入力</span><span><b>02</b> 10問にひとつずつ回答</span><span><b>03</b> 数時間後、メールでお知らせ</span></div>
       <section class="section" id="how"><div class="section-head"><h2>「何からやれば？」を、<br>小さなタスクに。</h2><p>初期版では、ヒアリングをAIが担当し、タスク分解は運営が行います。</p></div>
