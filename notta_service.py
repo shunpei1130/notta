@@ -10,6 +10,7 @@ import service_core as core
 import service_stripe as billing
 import service_providers as providers
 import service_intake as intake
+import service_workspace as workspace
 from urllib.parse import parse_qs, urlparse
 
 
@@ -24,10 +25,12 @@ def public_sandbox():
 def configuration():
     return {"mailReady": providers.mail_ready(), "aiReady": providers.interview_ready() if intake.enabled() else providers.ai_ready(),
             "searchReady": providers.search_ready(), "billingReady": billing.ready(),
-            "terms": "2026-10-intake-v1" if intake.enabled() else core.TERMS, "billingEnvironment": os.getenv("STRIPE_ENVIRONMENT", "sandbox"),
+            "terms": "2026-11-workspace-v1" if workspace.enabled() else "2026-10-intake-v1" if intake.enabled() else core.TERMS, "billingEnvironment": os.getenv("STRIPE_ENVIRONMENT", "sandbox"),
             "billingProvider": "stripe", "publicSandbox": public_sandbox(),
             "phone": os.getenv("NOTTA_SELLER_PHONE", "090-9325-5945"), "price": 3000,
-            "intakeMode": intake.enabled()}
+            "intakeMode": intake.enabled(), "workspaceMode": workspace.enabled(),
+            "initialProjectPrice": 0, "workspaceAiLimit": workspace.LIMIT,
+            "workspaceAiReady": workspace.enabled() and workspace.workspace_ai.interview.ready()}
 
 
 def dashboard(c, user):
@@ -39,6 +42,13 @@ def dashboard(c, user):
     if intake.enabled():
         result.update(intake=intake.summary(c, uid), operator=intake.is_operator(c, uid))
         result["legacyProjects"] = [dict(r) for r in c.execute("SELECT p.id,p.title,p.goal,p.created FROM projects p WHERE p.owner=? AND NOT EXISTS(SELECT 1 FROM svc_projects v WHERE v.project=p.id) ORDER BY p.rowid DESC", (uid,))]
+    if workspace.enabled():
+        added = workspace.dashboard(c, uid)
+        project_ids = {p["id"] for p in added["workspaceProjects"]}
+        application_ids = {a["id"] for a in added["workspaceApplications"]}
+        result["projects"] = [p for p in result["projects"] if p["id"] not in project_ids]
+        result["applications"] = [a for a in result["applications"] if a["id"] not in application_ids]
+        result.update(added)
     return result
 
 
@@ -61,7 +71,7 @@ def dispatch(handler, method, path):
                 return
             public = re.fullmatch(r"/api/service/public/([A-Za-z0-9_-]{16})", path)
             if method == "GET" and public:
-                handler.respond(200, core.public_project(c, public[1]))
+                handler.respond(200, workspace.public(c, public[1]) if workspace.enabled() and workspace.public_slug(c, public[1]) else core.public_project(c, public[1]))
                 return
             data = handler.input() if method == "POST" else None
             # Block browser cross-origin posts even if a future proxy changes CORS.
@@ -76,6 +86,14 @@ def dispatch(handler, method, path):
                 return
             user = handler.session(c)
             s.require(c.execute("SELECT 1 FROM svc_accounts WHERE user_id=?", (user["id"],)).fetchone(), 401, "メール認証でログインしてください。")
+            if not workspace.enabled():
+                paused_project = re.fullmatch(r"/api/service/projects/([a-f0-9]{24})(?:/[^/]+)?", path)
+                paused_application = re.fullmatch(r"/api/service/applications/([a-f0-9]{24})(?:/[^/]+)?", path)
+                paused_row = (c.execute("SELECT draft FROM svc_projects WHERE project=?", (paused_project[1],)).fetchone() if paused_project else
+                              c.execute("SELECT v.draft FROM applications a JOIN svc_projects v ON v.project=a.project WHERE a.id=?", (paused_application[1],)).fetchone() if paused_application else None)
+                if paused_row:
+                    paused_draft = json.loads(paused_row[0])
+                    s.require(not ("public" in paused_draft and "tasks" in paused_draft), 503, "共同作業の画面はメンテナンス中です。保存した内容は保持されています。")
             if method == "GET":
                 if intake.enabled():
                     item = re.fullmatch(r"/api/service/intakes/([a-f0-9]{24})", path)
@@ -108,13 +126,48 @@ def dispatch(handler, method, path):
                 if path == "/api/service/me":
                     handler.respond(200, dashboard(c, user))
                     return
+                if workspace.enabled():
+                    operator_workspace = re.fullmatch(r"/api/service/admin/intakes/([a-f0-9]{24})/workspace", path)
+                    if operator_workspace:
+                        handler.respond(200, workspace.operator_detail(c, user["id"], operator_workspace[1]))
+                        return
+                    thread = re.fullmatch(r"/api/service/applications/([a-f0-9]{24})/messages", path)
+                    history = re.fullmatch(r"/api/service/projects/([a-f0-9]{24})/history", path)
+                    if thread:
+                        cursor = parse_qs(urlparse(handler.path).query).get("after", ["0"])[0]
+                        s.require(cursor.isdigit() and len(cursor) < 19, 400)
+                        handler.respond(200, workspace.conversation(c, user["id"], thread[1], int(cursor)))
+                        return
+                    if history:
+                        handler.respond(200, workspace.history(c, user["id"], history[1]))
+                        return
                 project = re.fullmatch(r"/api/service/projects/([a-f0-9]{24})", path)
                 if project:
-                    handler.respond(200, core.project_detail(c, user["id"], project[1]))
+                    handler.respond(200, workspace.detail(c, user["id"], project[1]) if workspace.enabled() and workspace.exists(c, project[1]) else core.project_detail(c, user["id"], project[1]))
                     return
                 raise s.Problem(404, "ページがありません。")
             s.require(hmac.compare_digest(handler.headers.get("X-CSRF-Token", ""), user["csrf"]), 403, "操作確認が切れました。再ログインしてください。")
             uid = user["id"]
+            if workspace.enabled():
+                delivery = re.fullmatch(r"/api/service/admin/intakes/([a-f0-9]{24})/deliver", path)
+                project_action = re.fullmatch(r"/api/service/projects/([a-f0-9]{24})/(edit|assist|publish|apply|restore|close-role)", path)
+                message_action = re.fullmatch(r"/api/service/applications/([a-f0-9]{24})/(messages|read)", path)
+                application_action = re.fullmatch(r"/api/service/applications/([a-f0-9]{24})/(status|submit|cancel)", path)
+                if delivery:
+                    handler.respond(200, workspace.deliver(c, uid, delivery[1], data))
+                    return
+                if project_action and workspace.exists(c, project_action[1]):
+                    functions = {"edit": workspace.edit, "assist": workspace.assist, "publish": workspace.publish, "apply": workspace.apply, "restore": workspace.restore, "close-role": workspace.close_role}
+                    handler.respond(200, functions[project_action[2]](c, uid, project_action[1], data))
+                    return
+                if message_action:
+                    handler.respond(200, (workspace.send_message if message_action[2] == "messages" else workspace.mark_read)(c, uid, message_action[1], data))
+                    return
+                if application_action:
+                    found = c.execute("SELECT a.project FROM applications a JOIN svc_workspaces w ON w.project=a.project WHERE a.id=?", (application_action[1],)).fetchone()
+                    if found:
+                        handler.respond(200, workspace.application_action(c, uid, application_action[1], application_action[2], data))
+                        return
             if intake.enabled():
                 answer = re.fullmatch(r"/api/service/intakes/([a-f0-9]{24})/answers", path)
                 operation = re.fullmatch(r"/api/service/admin/intakes/([a-f0-9]{24})/(result|complete|retry)", path)

@@ -282,6 +282,7 @@ function wireApplications() {
 
 async function publicPage(slug) {
   const p = await api('/public/' + slug); state.public = p;
+  if (p.workspace) return nottaWorkspace.publicPage(p);
   document.title = p.title + '｜ノッタの募集';
   main(`<article class="public-page"><p class="eyebrow">LET'S CREATE TOGETHER</p><span class="pill">ファン・協力者の参加は無料</span><h1>${esc(p.title)}</h1><p class="public-intro">企画者：${esc(p.creator)}<br>参加条件を確認して、ご自身に合う役割へご応募ください。</p>
     ${[['goal','企画の目的'],['success','目指すこと'],['output','最初につくるもの'],['schedule','日程と進め方'],['conditions','参加条件・権利・報酬など'],['recruitment','募集について']].map(([key,label]) => `<section class="public-section"><h2>${label}</h2><p>${esc(p[key])}</p></section>`).join('')}
@@ -333,11 +334,14 @@ document.addEventListener('click', event => {
 });
 $('#account-button').addEventListener('click', () => { if (state.me) navigate('/workspace'); else auth(); });
 window.addEventListener('beforeunload', event => { if (state.dirty || state.busy) { event.preventDefault(); event.returnValue = ''; } });
+window.addEventListener('hashchange', async () => { if (location.pathname !== '/workspace') return; try { if (state.config.workspaceMode) await nottaWorkspace.save(); await render(); } catch (error) { notice(error.message, true); } });
 async function render() {
   await refreshMe();
+  document.body.classList.toggle('workspace-theme', !!state.config.workspaceMode);
   const path = location.pathname;
   if (['/terms','/privacy','/legal'].includes(path)) return legalPage(path.slice(1));
   if (path.startsWith('/p/')) return publicPage(path.split('/')[2]);
+  if (state.config.workspaceMode && await nottaWorkspace.render(path)) return;
   const legacy = path === '/workspace' && state.me && (state.me.projects.length || state.me.applications.length || state.me.billing.subscription) && (new URLSearchParams(location.search).has('legacy') || new URLSearchParams(location.hash.slice(1)).has('project'));
   if (state.config.intakeMode && !legacy) return nottaIntake.render(path);
   if (path === '/workspace' || path === '/billing/return') {

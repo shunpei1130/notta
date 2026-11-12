@@ -62,6 +62,17 @@ window.nottaIntake = (() => {
       <details class="faq"><summary>途中で閉じても大丈夫ですか？</summary><p>送信した回答は保存されます。同じメールアドレスでログインすると、続きから回答できます。まだ送信していない入力内容は、同じブラウザーのタブに一時保存します。</p></details>
       <details class="faq"><summary>企画は公開されますか？</summary><p>このヒアリングと完成した結果を確認できるのは、ご本人とノッタの運営だけです。ファンに公開する機能は、今後整えていきます。</p></details></section>`);
     document.querySelectorAll('[data-case]').forEach(button => button.addEventListener('click', () => openCase(Number(button.dataset.case), button)));
+    if (state.config.workspaceMode) {
+      $('.hero-copy > p:not(.eyebrow)').textContent = '10問に答えると、運営が企画と役割ごとのタスクを整理します。届いた企画はAIと修正し、募集ページの公開、ファンの応募、メッセージでの相談、担当決定までノッタで進められます。';
+      $('#how .section-head p').textContent = '最初の企画は運営が用意し、その後はアプリのAIと一緒に整えます。';
+      const steps = $$('#how .step');
+      $('h3', steps[2]).textContent = '企画を整え、仲間と進める';
+      $('p:last-child', steps[2]).textContent = '届いた企画をAIと修正し、内容を確認して募集ページを公開。URLをSNSで共有し、応募したファンとメッセージで相談して担当を決めます。';
+      $('#pricing .section-head p').textContent = '初回1企画は、ヒアリング・企画整理・AI修正・募集公開・応募者とのメッセージ・担当決定まで無料です。自動課金はありません。';
+      $('#pricing .panel .hint').textContent = '公開・メッセージ送信・担当決定はご自身で操作します。集客、企画の実現、参加人数を保証するものではありません。';
+      const privacyFaq = $$('.faq').find(el => $('summary', el)?.textContent === '企画は公開されますか？');
+      if (privacyFaq) $('p', privacyFaq).textContent = 'ヒアリングの原文と本人用の企画・資料はご本人と運営だけが確認できます。募集ページは、ご自身で公開する内容と役割を確認してから公開します。応募とメッセージは企画者と当該応募者だけが確認できます。';
+    }
     $('#goal-form').addEventListener('submit', event => {
       event.preventDefault();
       const form = event.currentTarget, goal = form.elements.goal.value.trim();
@@ -225,6 +236,20 @@ window.nottaIntake = (() => {
       <div id="result-editor">${item.state === 'interview' ? '<p class="banner">依頼者の回答が終わるまでお待ちください。</p>' : editor(item, adminDraft)}</div></div>${notificationCards(item)}
       ${item.result ? '<details class="intake-history"><summary>依頼者に表示している結果を見る</summary>' + resultCards(item.result) + '</details>' : ''}</div>`);
     wireEditor();
+    if (state.config.workspaceMode && item.state !== 'interview') {
+      const area = document.createElement('section'); area.className = 'panel';
+      area.innerHTML = item.projectId ? '<h2>本人の企画へ反映済み</h2><p>企画・タスク・AI修正・募集・メッセージの画面につながっています。再度届けても本人の編集を上書きしません。</p><button class="button secondary compact" id="inspect-workspace">反映された内容を確認</button><div id="workspace-inspection"></div>' : '<h2>アプリで進められる企画として届ける</h2><p>保存した企画とタスクを本人の画面へ反映します。募集公開とメール送信は行いません。協力者を募集する役割は、本人が企画画面で選べます。</p><button class="button" id="deliver-workspace">本人の企画へ反映する（メール送信なし）</button>';
+      $('#result-editor').append(area);
+      $('#deliver-workspace')?.addEventListener('click', () => busy($('#deliver-workspace'), async () => {
+        if (state.dirty) { notice('先に下書きを保存してください。', true); return; }
+        await api('/admin/intakes/' + item.id + '/deliver', {draftVersion: item.draftVersion});
+        adminDetail(await api('/admin/intakes/' + item.id)); notice('本人の企画へ反映しました。メールは送信していません。');
+      }));
+      $('#inspect-workspace')?.addEventListener('click', () => busy($('#inspect-workspace'), async () => {
+        const w = await api('/admin/intakes/' + item.id + '/workspace');
+        $('#workspace-inspection').innerHTML = '<h3>' + esc(w.draft.title) + '</h3><p class="text-block">' + esc(w.draft.overview) + '</p><p>状態：' + esc(w.state) + ' · タスク ' + w.draft.tasks.length + '件 · 版 ' + w.version + '</p><ol>' + w.draft.tasks.map(t => '<li>' + esc(t.title) + ' · ' + esc(t.status) + '</li>').join('') + '</ol>';
+      }));
+    }
     $$('[data-retry]').forEach(button => button.addEventListener('click', () => busy(button, async () => {
       if (state.dirty) { notice('先に下書きを保存してください。', true); return; }
       const updated = await api('/admin/intakes/' + item.id + '/retry', {notificationId:button.dataset.retry});
@@ -301,6 +326,12 @@ window.nottaIntake = (() => {
       privacy:['プライバシーポリシー', '<p>2026年10月29日改定。MAORA株式会社は以下のとおり個人情報を取り扱います。</p><h2>取得する情報と利用目的</h2><p>表示名、確認済みメールアドレス、入力した企画、ヒアリングの質問と回答、作成した結果、認証・送信の記録を、本人認証、タスク分解、完成通知、問い合わせ対応に使用します。認証の不正利用を防ぐため、IPアドレスを秘密鍵で変換した値と試行回数を記録します。広告目的の追跡や営業メールへの転用はしません。既存契約の支払と返金の状態は契約管理に使用します。</p><h2>運営に送信する情報と閲覧できる人</h2><p>すべての回答を送信した時点で、最初に入力した企画、表示名、確認済みメールアドレス、全10問の質問と回答、受付IDと日時を運営の shumpei.hasegawa@maora.co.jp に送信します。企画と結果は本人と運営のみ閲覧でき、この受付で一般公開はしません。作業が完了したら、本人に結果を確認するためのリンクをメールで送ります。閲覧にはログインが必要です。</p><h2>外部サービスへの送信</h2><p>質問文を作成するために、最初に入力した企画とそれまでの質問・回答をOpenAIのAPIまたはGoogle Gemini APIへ送信します。システムから表示名やメールアドレスをAIに送ることはありませんが、回答中に入力した情報は含まれます。検索は使用しません。メール送信にResend、データ保存にNeon、サイト配信にVercelを利用します。国外で処理する場合があります。既存契約の決済はStripeが処理し、当社はカード番号やセキュリティコードを保存しません。</p><h2>保管・安全管理</h2><p>通信の暗号化、本人認証、権限の確認を行います。確認コードは10分で失効し、ハッシュとして保存します。再ログイン後も続きから回答できるよう、送信済みの回答を保存します。まだ送信していない入力内容は同じブラウザーのタブに一時保存します。会計記録など保存義務のある情報を除き、サービスに必要な範囲で保管し、削除・訂正・開示の相談には本人確認のうえ対応します。</p><h2>お問い合わせ</h2>' + company],
       legal:['特定商取引法に基づく表記', company + '<h2>現在の提供内容・価格</h2><p>初回1人1企画。10問のヒアリング、企画の概要とタスク分解の確認まで0円です。回答を受け付けてから数時間を目安に作業し、完成後にメールでお知らせします。インターネット接続の通信費は利用者のご負担です。新規の有料申込みは停止しています。</p>' + legacy + '<h2>お支払い・返金方法（既存契約）</h2><p>Stripeによるカード決済です。申込み時に初回決済、以後毎月同じ日を基準に更新します。同じ日がない月は月末です。返金は原則として元のお支払方法に行い、明細への反映日はカード会社によって異なります。</p><h2>利用環境</h2><p>最新版のChrome・Safari・Edge等とインターネット接続が必要です。</p>'],
     };
+    if (state.config.workspaceMode) {
+      const accountStart = pages.terms[1].indexOf('<h2>アカウントと投稿</h2>');
+      pages.terms[1] = '<p>2026年11月12日改定。ノッタはMAORA株式会社が提供します。</p><h2>提供する内容</h2><p>最初の企画入力と10問のヒアリングをもとに、運営が企画の概要とタスクを用意します。提供後はAIとの相談、手編集、準備資料の保存、募集ページの公開、役割への応募、アプリ内メッセージ、担当決定、成果の提出と確認を利用できます。公開、送信、担当決定は利用者自身が操作します。</p><h2>料金とAI利用</h2><p>初回1人1企画は共同作業まで無料です。カード登録と自動課金はありません。企画受領後のAI利用は1企画30回までです。アプリ全体の費用上限や外部サービスの状況によりAIを停止する場合も、手編集と共同作業は継続できます。新規の月額申込みは停止しています。</p><h2>公開範囲と役割の条件</h2><p>ヒアリング原文と本人用の企画・資料は本人と運営だけが確認できます。募集ページには本人が確認して公開した内容を表示します。応募とメッセージは企画者と当該応募者だけが確認できます。参加費・実費・謝礼・権利などは役割ごとに当事者が確認してください。ノッタはSNSへの自動投稿、会場予約、参加費の徴収、集客や当日の運営代行を行いません。実現、人数、収益は保証しません。</p>' + pages.terms[1].slice(accountStart);
+      pages.privacy[1] = pages.privacy[1].replace('2026年10月29日改定。', '2026年11月12日改定。').replace('質問文を作成するために、', '質問文の作成のために、').replace('<h2>保管・安全管理</h2>', '<h2>企画のAI修正と共同作業</h2><p>企画受領後、利用者がAIに相談したときは、企画・タスク・資料・相談内容と必要な相談履歴をOpenAI APIへ送信します。応募者への返信案を依頼した場合は、利用者が選んだ応募内容と会話のみを追加します。システムから氏名やメールアドレスを自動付加せず、外部検索は行いません。AIへ送る文章に含めた情報は処理対象になります。応募内容やメッセージを他の応募者に表示しません。募集ページは本人による公開操作がある場合のみ一般公開します。</p><h2>保管・安全管理</h2>');
+      pages.legal[1] = pages.legal[1].replace('10問のヒアリング、企画の概要とタスク分解の確認まで0円です。', '10問のヒアリング、運営による初回企画の提供、提供後のAI修正30回、募集公開・応募・メッセージ・担当決定まで0円です。');
+    }
     const [title, body] = pages[kind];
     document.title = title + '｜ノッタ';
     main('<article class="legal-page"><p class="breadcrumb"><a href="/">ホーム</a></p><h1>' + title + '</h1>' + body + '</article>');

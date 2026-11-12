@@ -82,6 +82,10 @@ def detail(c, uid, intake_id, operator=False):
         result.update(draft=json.loads(item["result_draft"]), draftVersion=item["draft_version"],
                       publishedDraftVersion=item["published_draft_version"],
                       notifications=notification_view(c, intake_id))
+    import service_workspace as workspace
+    if workspace.enabled():
+        linked = c.execute("SELECT project FROM svc_workspaces WHERE intake=?", (intake_id,)).fetchone()
+        result["projectId"] = linked[0] if linked else None
     return result
 
 

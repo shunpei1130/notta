@@ -308,6 +308,7 @@ def public_project(c, slug):
     row = c.execute("SELECT p.owner,u.name,v.project,v.state,v.draft,v.slug FROM svc_projects v JOIN projects p ON p.id=v.project JOIN users u ON u.id=p.owner WHERE v.slug=?", (slug,)).fetchone()
     s.require(row and row["state"] == "published" and paid(c, row["owner"]), 404, "この募集は現在公開されていません。")
     d = json.loads(row["draft"])
+    s.require(not ("public" in d and "tasks" in d), 404, "この募集は現在公開されていません。")
     result = {key: d.get(key, "") for key in ("title", "goal", "success", "output", "schedule", "conditions", "recruitment", "questions")}
     result.update({"id": row["project"], "slug": slug, "creator": row["name"], "roles": [dict(r) for r in c.execute("SELECT id,title,output FROM tasks WHERE project=? ORDER BY rowid", (row["project"],))]})
     return result

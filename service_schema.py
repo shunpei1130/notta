@@ -24,8 +24,17 @@ CREATE TABLE IF NOT EXISTS svc_intake_ai_requests(id TEXT PRIMARY KEY,intake_id 
 CREATE TABLE IF NOT EXISTS svc_intake_notifications(id TEXT PRIMARY KEY,intake_id TEXT NOT NULL REFERENCES svc_intakes(id),kind TEXT NOT NULL,revision INTEGER NOT NULL,status TEXT NOT NULL,payload TEXT NOT NULL,idempotency_key TEXT UNIQUE NOT NULL,provider_id TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL,updated INTEGER NOT NULL,attempted_at INTEGER,error TEXT NOT NULL DEFAULT '',UNIQUE(intake_id,kind,revision));
 CREATE INDEX IF NOT EXISTS svc_intake_state ON svc_intakes(state,updated);
 CREATE INDEX IF NOT EXISTS svc_intake_mail ON svc_intake_notifications(status,updated);
+CREATE TABLE IF NOT EXISTS svc_workspaces(project TEXT PRIMARY KEY REFERENCES projects(id),intake TEXT UNIQUE NOT NULL REFERENCES svc_intakes(id),published TEXT NOT NULL DEFAULT '{}',created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS svc_workspace_history(project TEXT NOT NULL REFERENCES projects(id),version INTEGER NOT NULL,draft TEXT NOT NULL,reason TEXT NOT NULL,created INTEGER NOT NULL,PRIMARY KEY(project,version));
+CREATE TABLE IF NOT EXISTS svc_workspace_messages(id TEXT PRIMARY KEY,application TEXT NOT NULL REFERENCES applications(id),sender TEXT NOT NULL REFERENCES users(id),body TEXT NOT NULL,request_id TEXT NOT NULL,created INTEGER NOT NULL,UNIQUE(application,sender,request_id));
+CREATE INDEX IF NOT EXISTS svc_workspace_message_thread ON svc_workspace_messages(application,created);
+CREATE TABLE IF NOT EXISTS svc_workspace_reads(application TEXT NOT NULL REFERENCES applications(id),user_id TEXT NOT NULL REFERENCES users(id),last_read INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(application,user_id));
 """
 
 
 def migrate(connection):
     connection.executescript(SCHEMA)
+    if getattr(connection, 'dialect', '') == 'postgres':
+        # Early service migrations predate the adapter's stable row ordering.
+        for table in ('svc_messages', 'svc_intakes'):
+            connection.execute('ALTER TABLE ' + table + ' ADD COLUMN IF NOT EXISTS _ordinal BIGSERIAL UNIQUE')
