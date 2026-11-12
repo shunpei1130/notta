@@ -11,6 +11,7 @@ import service_core as core
 import service_intake as intake
 import service_providers as providers
 import workspace_ai
+import workspace_planning as planning
 
 LIMIT = 30
 MONTH_LIMIT = 2000
@@ -66,7 +67,7 @@ def validate(value):
         s.require(type(capacity) is int and 1 <= capacity <= 50, 400, "募集人数は1〜50名にしてください。")
         confirmed = task.get("termsConfirmed", False)
         s.require(type(confirmed) is bool, 400)
-        result["tasks"].append({**t, "id": tid, "status": status, "recruit": recruit,
+        result["tasks"].append({**t, **planning.task_extras(task), "id": tid, "status": status, "recruit": recruit,
                                 "capacity": capacity, "offer": offer, "termsConfirmed": confirmed})
     artifacts = value.get("artifacts", [])
     s.require(isinstance(artifacts, list) and len(artifacts) <= 50, 400, "資料は50件まで保存できます。")
@@ -77,7 +78,8 @@ def validate(value):
         s.require(not a["taskId"] or a["taskId"] in ids, 400, "資料に紐づくタスクを確認してください。")
         artifact_ids.add(a["id"])
         result["artifacts"].append(a)
-    return result
+    result['roadmap'] = copy.deepcopy(value.get('roadmap'))
+    return planning.normalize(result)
 
 
 def _change_summary(before, after):
@@ -87,8 +89,11 @@ def _change_summary(before, after):
             changes.append(label)
     if before.get("public") != after.get("public"):
         changes.append("募集ページの下書き")
+    if before.get('roadmap') != after.get('roadmap'):
+        changes.append('ロードマップ・企画のゴール')
     labels = {"title": "名前", "instructions": "作業内容", "role": "役割", "estimate": "時間", "completion": "完了条件",
-              "status": "進捗", "recruit": "募集対象", "capacity": "募集人数", "offer": "募集条件", "termsConfirmed": "条件確認"}
+              "status": "進捗", "recruit": "募集対象", "capacity": "募集人数", "offer": "募集条件", "termsConfirmed": "条件確認",
+              'stageId': '段階', 'dependsOn': '前提の作業', 'useCommonTerms': '共通条件', 'recruitCandidate': '募集候補'}
     for collection, label in (("tasks", "タスク"), ("artifacts", "資料")):
         previous = {item["id"]: item for item in before.get(collection, [])}
         current = {item["id"]: item for item in after.get(collection, [])}
@@ -103,9 +108,15 @@ def _change_summary(before, after):
     return "、".join(changes) if changes else "内容の変更なし"
 
 
-def _save(c, row, draft, reason):
-    draft = validate(draft)
+def _save(c, row, draft, reason, reset_confirmation=False, confirm_goal=False):
     before = json.loads(row["draft"])
+    s.require(isinstance(draft, dict), 400, '入力の形式を確認してください。')
+    draft = validate(planning.carry(before, draft))
+    if draft['roadmap']:
+        if confirm_goal:
+            draft['roadmap']['confirmedAt'] = s.stamp()
+        elif not reset_confirmation and planning.proof(before) == planning.proof(draft):
+            draft['roadmap']['confirmedAt'] = (before.get('roadmap') or {}).get('confirmedAt')
     prior = {t["id"] for t in before["tasks"]}
     next_ids = {t["id"] for t in draft["tasks"]}
     for tid in prior - next_ids:
@@ -156,6 +167,29 @@ def deliver_managed(c, intake_id, data, expected_email):
     return _deliver(c, None, intake_id, data)
 
 
+def prepare_planning_managed(c, intake_id, data, expected_email):
+    """Versioned, private preparation through the authenticated DB owner only."""
+    require_enabled()
+    s.require(getattr(c, 'dialect', '') == 'postgres', 403)
+    c.execute('BEGIN IMMEDIATE')
+    identity = c.execute('SELECT current_user,current_database()').fetchone()
+    s.require(identity[0] == 'notta_owner' and identity[1] == 'notta', 403)
+    linked = c.execute('SELECT w.project,i.user_id,u.email,a.verified_at FROM svc_workspaces w JOIN svc_intakes i ON i.id=w.intake JOIN users u ON u.id=i.user_id JOIN svc_accounts a ON a.user_id=u.id WHERE w.intake=?', (intake_id,)).fetchone()
+    s.require(linked and linked['email'] == expected_email and linked['verified_at'] > 0, 409, '本人の確認済み受付と一致しません。')
+    row = owner_row(c, linked['user_id'], linked['project'])
+    if json.loads(row['draft']).get('roadmap'):
+        c.commit()
+        return {'created': False, 'projectId': linked['project']}
+    row = _editable(c, linked['user_id'], linked['project'], data.get('version'))
+    draft = validate(data.get('draft'))
+    s.require(planning.progress(draft)['ready'] and planning.recruitment(draft)['ready'], 400, '道筋と募集初稿を確認してください。')
+    s.require([t['id'] for t in draft['tasks']] == [t['id'] for t in json.loads(row['draft'])['tasks']], 409, '既存タスクを保持した追加だけが可能です。')
+    _save(c, row, draft, '運営がロードマップと募集初稿を追加')
+    core.event(c, None, 'workspace_planning_prepared_db_operator', linked['project'])
+    c.commit()
+    return {'created': True, 'projectId': linked['project']}
+
+
 def _deliver(c, operator, intake_id, data):
     c.execute("BEGIN IMMEDIATE")
     item = c.execute("SELECT * FROM svc_intakes WHERE id=?", (intake_id,)).fetchone()
@@ -174,11 +208,16 @@ def _deliver(c, operator, intake_id, data):
     s.require(isinstance(indexes, list) and all(type(i) is int and 0 <= i < len(result["tasks"]) for i in indexes), 400)
     tasks = []
     for i, t in enumerate(result["tasks"]):
-        tasks.append({**t, "id": s.ident(), "status": "未着手", "recruit": i in indexes,
-                      "capacity": 1, "offer": {**t, "terms": ""}, "termsConfirmed": False})
+        tasks.append({**t, **planning.task_extras(t), "id": t.get('id') or s.ident(), "status": "未着手", "recruit": i in indexes or t.get('recruit', False),
+                      "recruitCandidate": i in indexes or t.get('recruitCandidate', t.get('recruit', False)),
+                      "capacity": t.get('capacity', 1), "offer": t.get('offer', {**t, "terms": ""}), "termsConfirmed": False})
     draft = {"title": result["title"], "overview": result["overview"], "firstDeliverable": result["firstDeliverable"],
-             "public": {"title": result["title"], "overview": result["overview"], "schedule": "", "conditions": "", "recruitment": ""},
-             "tasks": tasks, "artifacts": []}
+             "public": result.get('public', {"title": result["title"], "overview": result["overview"], "schedule": "", "conditions": "", "recruitment": ""}),
+             "roadmap": result.get('roadmap'), "tasks": tasks, "artifacts": []}
+    if planning.enabled():
+        s.require(planning.progress(draft)['ready'], 400, 'ロードマップのゴール・段階・タスク配置を用意してください。')
+        if any(t['recruit'] for t in tasks):
+            s.require(planning.recruitment(draft)['ready'], 400, '募集候補の紹介文と応募条件の初稿を用意してください。')
     pid, now = s.ident(), s.stamp()
     c.execute("INSERT INTO projects(id,owner,title,goal,output,conditions,days,created) VALUES(?,?,?,?,?,'',36500,?)", (pid, uid, draft["title"], draft["overview"], draft["firstDeliverable"], now))
     c.execute("INSERT INTO svc_projects(project,slug,state,draft,version,created,updated) VALUES(?,?,'draft',?,0,?,?)", (pid, secrets.token_urlsafe(12), core.dumps({"tasks": []}), now, now))
@@ -236,7 +275,7 @@ def operator_restore(c, operator, intake_id, data):
     row = _editable(c, source["user_id"], pid, data.get("version"))
     target = c.execute("SELECT draft FROM svc_workspace_history WHERE project=? AND version=?", (pid, data.get("restoreVersion"))).fetchone()
     s.require(target, 404)
-    _save(c, row, json.loads(target[0]), "運営が履歴 第" + str(data.get("restoreVersion")) + "版から復元")
+    _save(c, row, json.loads(target[0]), "運営が履歴 第" + str(data.get("restoreVersion")) + "版から復元", reset_confirmation=True)
     core.event(c, operator, "workspace_restored_operator", pid)
     c.commit()
     return operator_detail(c, operator, intake_id)
@@ -247,8 +286,9 @@ def detail(c, uid, pid):
     applications = [dict(r) for r in c.execute("SELECT a.*,u.name FROM applications a JOIN users u ON u.id=a.fan WHERE a.project=? ORDER BY a.rowid", (pid,))]
     for a in applications:
         a["unread"] = unread(c, a["id"], uid)
+    draft = json.loads(row['draft'])
     return {"workspace": True, "id": pid, "version": row["version"], "state": row["state"], "slug": row["slug"],
-            "draft": json.loads(row["draft"]), "published": json.loads(row["published"]), "applications": applications,
+            "draft": draft, 'roadmapProgress': planning.progress(draft), 'recruitmentReadiness': planning.recruitment(draft), "published": json.loads(row["published"]), "applications": applications,
             "access": {"source": "first_project", "collaboration": True}, "aiQuota": ai_quota(c, pid),
             "messages": [dict(r) for r in c.execute("SELECT role,body,created FROM svc_messages WHERE project=? ORDER BY rowid", (pid,))]}
 
@@ -272,11 +312,11 @@ def edit(c, uid, pid, data):
     return detail(c, uid, pid)
 
 
-def _offer(t):
-    return {"id": t["id"], **t["offer"], "capacity": t["capacity"], "closed": False}
+def _offer(t, common=''):
+    return {"id": t["id"], **planning.offer(t, common), "capacity": t["capacity"], "closed": False}
 
 
-def _snapshot(c, row):
+def _snapshot(c, row, confirm_roles=False):
     d = json.loads(row["draft"])
     fields = d["public"]
     s.require(all(fields.get(k) for k in PUBLIC_FIELDS), 400, "公開する企画概要・日程・参加条件・募集文を入力してください。")
@@ -291,16 +331,17 @@ def _snapshot(c, row):
         applied = c.execute("SELECT 1 FROM applications WHERE task=?", (task["id"],)).fetchone()
         if original and applied:
             if task["recruit"]:
-                s.require(not original["closed"] and _offer(task) == original, 409,
+                s.require(not original["closed"] and _offer(task, fields['conditions']) == original, 409,
                           "応募済みの募集条件は変更できません。受付を停止して新しい募集枠を作成してください。")
                 roles.append(original)
             else:
                 roles.append({**original, "closed": True})
             continue
         if task["recruit"]:
-            s.require(task["termsConfirmed"] and all(task["offer"].get(k) for k in (*TASK_FIELDS, "terms")), 400,
+            prepared = planning.offer(task, fields['conditions'])
+            s.require((task["termsConfirmed"] or confirm_roles) and all(prepared.get(k) for k in (*TASK_FIELDS, "terms")), 400,
                       "募集する役割の作業内容・時間・完了条件・参加費や謝礼の条件を確認してください。")
-            roles.append(_offer(task))
+            roles.append(_offer(task, fields['conditions']))
     # Retain closed offers and their stable IDs even if there are applicants.
     s.require(roles and any(not t["closed"] for t in roles), 400, "募集する役割を1件以上選んでください。")
     return {**fields, "roles": roles}
@@ -310,11 +351,25 @@ def publish(c, uid, pid, data):
     c.execute("BEGIN IMMEDIATE")
     row = _editable(c, uid, pid, data.get("version"))
     s.require(data.get("consent") is True, 400, "公開前の確認にチェックを入れてください。")
-    snap = _snapshot(c, row)
+    snap = _snapshot(c, row, planning.enabled() and data.get('confirmRoles') is True)
     c.execute("UPDATE svc_workspaces SET published=? WHERE project=?", (core.dumps(snap), pid))
     c.execute("UPDATE svc_projects SET state='published',version=version+1,updated=? WHERE project=?", (s.stamp(), pid))
     c.execute("UPDATE projects SET launched=1,started=COALESCE(started,?) WHERE id=?", (s.stamp(), pid))
     core.event(c, uid, "workspace_published", pid)
+    c.commit()
+    return detail(c, uid, pid)
+
+
+def complete_goal(c, uid, pid, data):
+    c.execute('BEGIN IMMEDIATE')
+    row = _editable(c, uid, pid, data.get('version'))
+    draft = json.loads(row['draft'])
+    state = planning.progress(draft)
+    s.require(data.get('confirm') is True and state['ready'] and state['done'] == state['total'], 409,
+              'すべてのタスクと企画の完了条件を確認してから完了してください。')
+    if not state['confirmedAt']:
+        _save(c, row, draft, '本人が企画の完了を確認', confirm_goal=True)
+        core.event(c, uid, 'workspace_goal_completed', pid)
     c.commit()
     return detail(c, uid, pid)
 
@@ -472,7 +527,7 @@ def restore(c, uid, pid, data):
     row = _editable(c, uid, pid, data.get("version"))
     target = c.execute("SELECT draft FROM svc_workspace_history WHERE project=? AND version=?", (pid, data.get("restoreVersion"))).fetchone()
     s.require(target, 404)
-    _save(c, row, json.loads(target[0]), "履歴 第" + str(data.get("restoreVersion")) + "版から復元")
+    _save(c, row, json.loads(target[0]), "履歴 第" + str(data.get("restoreVersion")) + "版から復元", reset_confirmation=True)
     c.commit()
     return detail(c, uid, pid)
 
@@ -495,7 +550,9 @@ def close_role(c, uid, pid, data):
 
 
 def _ai_edit(draft, output):
-    s.require(isinstance(output, dict) and set(output) == set(workspace_ai.SCHEMA["properties"]), 502)
+    required = {'reply', 'changes', 'newTasks', 'removeTaskIds', 'artifacts'}
+    s.require(isinstance(output, dict) and required <= set(output) <= set(workspace_ai.SCHEMA["properties"]), 502)
+    had_roadmap = planning.progress(draft)['ready']
     s.text(output["reply"], 4000)
     for key in ("changes", "newTasks", "removeTaskIds", "artifacts"):
         s.require(isinstance(output[key], list) and len(output[key]) <= 50, 502)
@@ -509,9 +566,11 @@ def _ai_edit(draft, output):
         else:
             s.require(target == "task" and tid in tasks and key in TASK_FIELDS, 502)
             tasks[tid][key] = s.text(change.get("value"), TASK_FIELDS[key], blank=True)
-    for value in output["newTasks"]:
+    temporary = {}
+    for index, value in enumerate(output["newTasks"]):
         task = text_fields(value, TASK_FIELDS, required=True)
-        draft["tasks"].append({**task, "id": s.ident(), "status": "未着手", "recruit": False, "capacity": 1, "offer": {**task, "terms": ""}, "termsConfirmed": False})
+        tid = s.ident();temporary['new:'+str(index)] = tid
+        draft["tasks"].append({**task, "id": tid, "status": "未着手", "recruit": False, "capacity": 1, "offer": {**task, "terms": ""}, "termsConfirmed": False})
     s.require(all(tid in tasks for tid in output["removeTaskIds"]), 502)
     draft["tasks"] = [t for t in draft["tasks"] if t["id"] not in output["removeTaskIds"]]
     arts = {a["id"]: a for a in draft["artifacts"]}
@@ -519,11 +578,47 @@ def _ai_edit(draft, output):
         aid = value.get("id")
         s.require(not aid or aid in arts, 502)
         artifact = {**value, "id": aid or s.ident()}
+        ref = artifact.get('taskId')
+        if isinstance(ref, str): artifact['taskId'] = temporary.get(ref, ref)
         if aid:
             arts[aid].update(artifact)
         else:
             draft["artifacts"].append(artifact)
-    return validate(draft)
+    roadmap = output.get('roadmap')
+    if roadmap is not None:
+        s.require(isinstance(roadmap, dict) and isinstance(roadmap.get('stages'), list) and len(roadmap['stages']) <= 50, 502)
+        roadmap = copy.deepcopy(roadmap)
+        existing = {v['id'] for v in (draft.get('roadmap') or {}).get('stages', [])}
+        stage_refs = set()
+        for stage in roadmap['stages']:
+            ref = stage.get('id')
+            s.require(isinstance(ref, str) and ref not in stage_refs, 502);stage_refs.add(ref)
+            if re.fullmatch(r'stage:[0-9]{1,2}', ref):
+                temporary[ref] = s.ident();stage['id'] = temporary[ref]
+            else:
+                s.require(ref in existing, 502)
+        draft['roadmap'] = roadmap
+    all_tasks = {t['id']: t for t in draft['tasks']}
+    for key in ('taskLinks', 'publicOffers'):
+        values = output.get(key, [])
+        s.require(isinstance(values, list) and len(values) <= 50, 502)
+        touched = set()
+        for value in values:
+            s.require(isinstance(value, dict), 502)
+            ref = value.get('id' if key == 'taskLinks' else 'taskId')
+            tid = temporary.get(ref, ref) if isinstance(ref, str) else None
+            s.require(tid in all_tasks and tid not in touched, 502);touched.add(tid)
+            task = all_tasks[tid]
+            if key == 'taskLinks':
+                stage = value.get('stageId');deps = value.get('dependsOn')
+                s.require(isinstance(stage, str) and isinstance(deps, list) and all(isinstance(v, str) for v in deps), 502)
+                task.update(stageId=temporary.get(stage, stage), dependsOn=[temporary.get(dep, dep) for dep in deps])
+            else:
+                s.require(type(value.get('useCommonTerms')) is bool, 502)
+                task.update(offer=text_fields(value, {**TASK_FIELDS, 'terms': 2000}), useCommonTerms=value['useCommonTerms'], termsConfirmed=False)
+    result = validate(draft)
+    s.require(not had_roadmap or planning.progress(result)['ready'], 502, 'タスクの段階とつながりを確認できませんでした。元の内容を保持しています。')
+    return result
 
 
 def assist(c, uid, pid, data):

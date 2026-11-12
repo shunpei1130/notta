@@ -12,6 +12,7 @@ import re
 import server as s
 import service_core as core
 import service_providers as providers
+import workspace_planning as planning
 
 OPERATOR = "shumpei.hasegawa@maora.co.jp"
 MONTH_LIMIT = 2000
@@ -305,17 +306,29 @@ def _result(value, complete=False):
             key: s.text(task.get(key, ""), limit, blank=not complete)
             for key, limit in (("title", 120), ("instructions", 3000), ("role", 120), ("estimate", 120), ("completion", 2000))
         })
-    return cleaned
+    return planning.initial(value, cleaned)
 
 
 def save_result(c, uid, intake_id, data):
     require_operator(c, uid)
-    result = _result(data.get("result"))
     c.execute("BEGIN IMMEDIATE")
     item = row(c, intake_id, uid, True)
     s.require(item["state"] in ("submitted", "working", "ready"), 409, "ヒアリングの完了をお待ちください。")
     s.require(type(data.get("draftVersion")) is int and data["draftVersion"] == item["draft_version"],
               409, "ほかの画面で保存されています。最新の内容をご確認ください。")
+    value = data.get('result')
+    s.require(isinstance(value, dict), 400, '結果を入力してください。')
+    prior = json.loads(item['result_draft'])
+    value = planning.carry(prior, value)
+    if any(t.get('id') for t in prior.get('tasks', [])):
+        s.require(all(isinstance(t, dict) and t.get('id') for t in value.get('tasks', [])), 409,
+                  '編集画面が更新されています。入力を控えてから再読み込みしてください。')
+    if 'public' not in value and 'public' in prior: value['public'] = prior['public']
+    old_tasks = {t.get('id'): t for t in prior.get('tasks', [])}
+    for task in value.get('tasks', []):
+        for key in ('offer', 'capacity', 'recruit', 'termsConfirmed'):
+            if key not in task and key in old_tasks.get(task.get('id'), {}): task[key] = old_tasks[task['id']][key]
+    result = _result(value)
     encoded = core.dumps(result)
     if item["result_draft"] != encoded:
         c.execute("UPDATE svc_intakes SET result_draft=?,draft_version=draft_version+1,state=?,updated=? WHERE id=?",

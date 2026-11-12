@@ -9,7 +9,7 @@ window.nottaIntake = (() => {
   const readLocal = key => { try { return JSON.parse(sessionStorage.getItem(key) || 'null'); } catch { return null; } };
   const writeLocal = (key, value) => { try { sessionStorage.setItem(key, JSON.stringify(value)); } catch {} };
   const clearLocal = key => { try { sessionStorage.removeItem(key); } catch {} };
-  const emptyTask = () => ({title:'', instructions:'', role:'', estimate:'', completion:''});
+  const emptyTask = () => ({...(state.config.planningMode?{id:crypto.randomUUID().replaceAll('-','').slice(0,24),stageId:'',dependsOn:[]}:{}),title:'', instructions:'', role:'', estimate:'', completion:''});
   let adminItem = null, adminDraft = null;
 
   const cases = [
@@ -222,11 +222,12 @@ window.nottaIntake = (() => {
   function collectResult() {
     const form = $('#result-form');
     if (!form) return adminDraft;
-    return {title:$('input[name=title]', form).value, overview:form.elements.overview.value, firstDeliverable:form.elements.firstDeliverable.value,
-      tasks:$$('[data-task-index]', form).map(card => Object.fromEntries($$('input,textarea', card).map(field => [field.name, field.value])))};
+    return {...adminDraft,title:$('input[name=title]', form).value, overview:form.elements.overview.value, firstDeliverable:form.elements.firstDeliverable.value,
+      tasks:$$('[data-task-index]', form).map((card,index) => ({...adminDraft.tasks[index],...Object.fromEntries($$('input,textarea', card).map(field => [field.name, field.value]))}))};
   }
 
   function editor(item, value) {
+    if(state.config.planningMode)nottaPlanning.ensure(value);
     const tasks = value.tasks || [];
     return `<form id="result-form" class="panel form-stack"><h2>企画とタスクの下書き</h2><p class="hint">下書きは依頼者の画面には表示されません。保存後に「結果を確定して通知」を押すと、保存した結果を依頼者の画面に反映し、メールでお知らせします。</p>
       <label>企画名<input name="title" maxlength="120" value="${esc(value.title || '')}"></label>
@@ -242,7 +243,7 @@ window.nottaIntake = (() => {
       <button class="button secondary compact" type="button" data-move="1" ${index === tasks.length - 1 ? 'disabled' : ''} aria-label="タスク${index + 1}を下に移動">↓ 下へ</button>
       <button class="text-button" type="button" data-remove aria-label="タスク${index + 1}を削除">削除</button></div></fieldset>`).join('')}</div>
       <button class="button secondary compact" type="button" id="add-task" ${tasks.length >= 50 ? 'disabled' : ''}>＋ タスクを追加</button>
-      <p class="form-error" role="alert"></p><p class="hint" id="draft-status" role="status">下書き 第${item.draftVersion}版 · 確定済み 第${item.resultVersion}版</p>
+      ${state.config.planningMode?nottaPlanning.editor(value)+nottaPlanning.prepare(value):''}<p class="form-error" role="alert"></p><p class="hint" id="draft-status" role="status">下書き 第${item.draftVersion}版 · 確定済み 第${item.resultVersion}版</p>
       <div class="toolbar"><button class="button secondary" type="submit">下書きを保存</button><button class="button" id="publish-result" type="button" ${item.draftVersion === 0 || item.publishedDraftVersion === item.draftVersion ? 'disabled' : ''}>結果を確定して通知</button></div></form>`;
   }
 
@@ -294,6 +295,7 @@ window.nottaIntake = (() => {
   function wireEditor() {
     const form = $('#result-form');
     if (!form) return;
+    if(state.config.planningMode)nottaPlanning.bind({getDraft:()=>adminDraft,beforeRedraw:()=>{adminDraft=collectResult();},dirty:()=>{state.dirty=true;$('#publish-result').disabled=true;$('#draft-status').textContent='変更内容はまだ保存されていません。';},redraw:redrawEditor});
     form.addEventListener('input', () => {
       state.dirty = true; $('#publish-result').disabled = true; $('#draft-status').textContent = '変更内容はまだ保存されていません。';
     });

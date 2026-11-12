@@ -28,7 +28,7 @@ def configuration():
             "terms": "2026-11-workspace-v1" if workspace.enabled() else "2026-10-intake-v1" if intake.enabled() else core.TERMS, "billingEnvironment": os.getenv("STRIPE_ENVIRONMENT", "sandbox"),
             "billingProvider": "stripe", "publicSandbox": public_sandbox(),
             "phone": os.getenv("NOTTA_SELLER_PHONE", "090-9325-5945"), "price": 3000,
-            "intakeMode": intake.enabled(), "workspaceMode": workspace.enabled(),
+            "intakeMode": intake.enabled(), "workspaceMode": workspace.enabled(), "planningMode": workspace.planning.enabled(),
             "initialProjectPrice": 0, "workspaceAiLimit": workspace.LIMIT,
             "workspaceAiReady": workspace.enabled() and workspace.workspace_ai.interview.ready()}
 
@@ -155,14 +155,14 @@ def dispatch(handler, method, path):
                     handler.respond(200, functions[operator_action[2]](c, uid, operator_action[1], data))
                     return
                 delivery = re.fullmatch(r"/api/service/admin/intakes/([a-f0-9]{24})/deliver", path)
-                project_action = re.fullmatch(r"/api/service/projects/([a-f0-9]{24})/(edit|assist|publish|apply|restore|close-role)", path)
+                project_action = re.fullmatch(r"/api/service/projects/([a-f0-9]{24})/(edit|assist|publish|apply|restore|close-role|complete-goal)", path)
                 message_action = re.fullmatch(r"/api/service/applications/([a-f0-9]{24})/(messages|read)", path)
                 application_action = re.fullmatch(r"/api/service/applications/([a-f0-9]{24})/(status|submit|cancel)", path)
                 if delivery:
                     handler.respond(200, workspace.deliver(c, uid, delivery[1], data))
                     return
                 if project_action and workspace.exists(c, project_action[1]):
-                    functions = {"edit": workspace.edit, "assist": workspace.assist, "publish": workspace.publish, "apply": workspace.apply, "restore": workspace.restore, "close-role": workspace.close_role}
+                    functions = {"edit": workspace.edit, "assist": workspace.assist, "publish": workspace.publish, "apply": workspace.apply, "restore": workspace.restore, "close-role": workspace.close_role, 'complete-goal': workspace.complete_goal}
                     handler.respond(200, functions[project_action[2]](c, uid, project_action[1], data))
                     return
                 if message_action:

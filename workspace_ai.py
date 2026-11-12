@@ -18,6 +18,10 @@ SCHEMA = obj({
     "newTasks": {"type": "array", "items": obj({k: STRING for k in ("title", "instructions", "role", "estimate", "completion")})},
     "removeTaskIds": {"type": "array", "items": STRING},
     "artifacts": {"type": "array", "items": obj({k: STRING for k in ("id", "title", "body", "taskId")})},
+    'roadmap': {'anyOf': [{'type': 'null'}, obj({'goal': STRING, 'criteria': STRING,
+        'stages': {'type': 'array', 'items': obj({k: STRING for k in ('id', 'title', 'outcome')})}})]},
+    'taskLinks': {'type': 'array', 'items': obj({'id': STRING, 'stageId': STRING, 'dependsOn': {'type': 'array', 'items': STRING}})},
+    'publicOffers': {'type': 'array', 'items': obj({'taskId': STRING, **{k: STRING for k in ('title', 'instructions', 'role', 'estimate', 'completion', 'terms')}, 'useCommonTerms': {'type': 'boolean'}})},
 })
 
 
@@ -38,6 +42,12 @@ def generate(context):
         "返信案の依頼は資料として作り、送信はしない。個人の連絡先は書き足さない。"
         "応募済みタスクを削除せず、必要なら新タスクを提案する。"
         "新タスクは募集を無効にして追加される。全企画の作り直しや無関係な変更はしない。"
+        "roadmapは道筋を変更するときだけ設定し、それ以外はnull。goalは企画全体の完成形、criteriaは最終の完了条件。売上や集客の保証を書かない。"
+        "既存の段階idを保持し、新段階だけstage:0、stage:1の一時idを使う。taskLinksでタスクの所属段階と前提タスクを設定する。"
+        "新タスクはnewTasksの順番でnew:0、new:1として参照する。全タスクを段階に置き、循環させず、並行できる作業を不必要に直列にしない。"
+        "既存の道筋がある場合、タスク追加・削除でも残るすべてのタスクを有効な段階に置く。"
+        "募集文はpublicの変更、募集用の役割説明はpublicOffers。本人用の内部メモや原文回答をそのまま募集に流用しない。"
+        "publicOffersは公開をせず下書きだけを直す。共通条件を使う場合useCommonTerms=true。未定を具体的な日時・費用に捏造しない。"
     )
     payload = {"model": interview.MODEL, "instructions": system,
                "input": [{"role": "user", "content": json.dumps(context, ensure_ascii=False)}],

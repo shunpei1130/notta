@@ -20,6 +20,8 @@ DATA.mkdir(parents=True, exist_ok=True)
 os.environ.update(NOTTA_SERVICE_ENABLED="yes", NOTTA_INTAKE_ENABLED="yes", NOTTA_WORKSPACE_ENABLED="yes",
                   NOTTA_AUTH_SECRET=secrets.token_urlsafe(40), NOTTA_PUBLIC_ORIGIN="http://127.0.0.1:8892",
                   NOTTA_AI_ENABLED="yes", OPENAI_API_KEY="fixture-not-a-key")
+if os.getenv('NOTTA_BROWSER_PLANNING') == 'yes':
+    os.environ['NOTTA_PLANNING_ENABLED'] = 'yes'
 providers.mail_ready = lambda: True
 providers.interview_ready = lambda: False
 providers.search_ready = lambda: False
@@ -51,6 +53,17 @@ with s.connect() as c:
     result = {"title": "ファンとつくる、小さな写真展", "overview": "【検証用の架空企画】写真を選び、展示と交流を楽しむ。", "firstDeliverable": "写真10点と展示計画",
               "tasks": [{"title": name, "instructions": "候補をまとめて企画者に提案する。", "role": "写真が好きな協力者", "estimate": "30分", "completion": "候補一覧と提案メモ"}
                         for name in ("テーマを決める", "会場を探す", "費用を整理する", "写真を選ぶ", "役割を相談する", "告知をつくる", "申込を整理する", "交流企画を考える", "会場を飾る", "進行表をつくる", "備品を揃える", "設営する", "当日を進める", "片付けとお礼") ]}
+    if work.planning.enabled():
+        stages = [{'id': s.ident(), 'title': name, 'outcome': outcome} for name, outcome in (
+            ('開催の条件を整える', '会場と費用・役割が決まり、具体的な準備に進める'),
+            ('写真・告知・展示を準備する', '参加者と展示内容が揃い、当日を迎えられる'),
+            ('開催し、片付けとお礼を終える', '写真展と交流を実施し、会場を返却してお礼まで終える'))]
+        result['roadmap'] = {'goal': 'ファンと写真展を開き、片付け・お礼まで終える', 'criteria': '写真を展示して交流し、会場返却と参加者へのお礼が完了している', 'stages': stages}
+        result['public'] = {'title': 'ファンとつくる写真展', 'overview': '写真を選んで展示する、小さな共創企画です。', 'schedule': '日程と会場は未定。会場探しから一緒に進めます。', 'conditions': '任意の協力。参加費・実費・権利は事前に相談して決めます。', 'recruitment': '写真や展示が好きな方と一緒につくりたいです。'}
+        for i, task in enumerate(result['tasks']):
+            task.update(id=s.ident(), stageId=stages[0 if i in (0,1,2,4) else 2 if i>=11 else 1]['id'], dependsOn=[], useCommonTerms=True, recruit=i in (1,5,7,8), recruitCandidate=i in (1,5,7,8), offer={**task, 'terms': ''})
+        dependencies = [[],[0],[1],[0],[0],[0,1,4],[5],[2],[1,2],[6,7,8],[3,6,7,8],[9,10],[11],[12]]
+        for task, before in zip(result['tasks'], dependencies): task['dependsOn'] = [result['tasks'][index]['id'] for index in before]
     pid = work.deliver(c, operator, item["id"], {"result": result, "draftVersion": 0, "recruitTaskIndexes": [1, 5, 7, 8]})["projectId"]
     (DATA / "fixture.json").write_text(json.dumps({"project": pid, "intake": item["id"]}), encoding="utf-8")
 httpd = ThreadingHTTPServer(("127.0.0.1", 8892), s.Handler)
