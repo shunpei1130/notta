@@ -219,6 +219,9 @@ def _snapshot(c, row):
     fields = d["public"]
     s.require(all(fields.get(k) for k in PUBLIC_FIELDS), 400, "公開する企画概要・日程・参加条件・募集文を入力してください。")
     old = json.loads(row["published"])
+    if c.execute("SELECT 1 FROM applications WHERE project=?", (row["project"],)).fetchone():
+        s.require(all(fields.get(k) == old.get(k) for k in PUBLIC_FIELDS), 409,
+                  "応募済みの企画案内・参加条件は固定されています。役割の条件を変える場合は旧枠の受付を停止し、新しい募集枠を作成してください。")
     previous = {r["id"]: r for r in old.get("roles", [])}
     roles = []
     for task in d["tasks"]:
@@ -260,8 +263,12 @@ def public(c, slug):
     s.require(row and row["state"] == "published", 404, "この募集は現在公開されていません。")
     snap = json.loads(row["published"])
     s.require(snap.get("roles"), 404)
-    return {"workspace": True, "id": row["project"], "slug": slug, "creator": row["name"],
+    return {"workspace": True, "id": row["project"], "slug": slug, "creator": row["name"], "publicationRevision": publication_revision(snap),
             **{k: snap[k] for k in PUBLIC_FIELDS}, "roles": snap["roles"]}
+
+
+def publication_revision(snapshot):
+    return hashlib.sha256(core.dumps(snapshot).encode()).hexdigest()
 
 
 def public_slug(c, slug):
@@ -281,7 +288,10 @@ def apply(c, uid, pid, data):
         s.require(prior["experience"] == body, 409, "この役割には応募済みです。メッセージでご相談ください。")
         c.commit()
         return {"id": prior["id"]}
-    task = next((t for t in json.loads(row["published"]).get("roles", []) if t["id"] == tid), None)
+    snap = json.loads(row["published"])
+    s.require(data.get("publicationRevision") == publication_revision(snap), 409,
+              "募集内容が更新されました。ページを再読込し、最新の条件を確認してから応募してください。")
+    task = next((t for t in snap.get("roles", []) if t["id"] == tid), None)
     s.require(task and not task["closed"], 409, "この役割の応募受付は停止しています。")
     s.require(_assigned(c, tid) < task["capacity"], 409, "この役割の担当は決まりました。")
     s.require(c.execute("SELECT COUNT(*) FROM applications WHERE project=?", (pid,)).fetchone()[0] < 100, 429, "この企画の応募上限に達しました。")

@@ -66,7 +66,7 @@ class WorkspaceTest(unittest.TestCase):
     def applied(self, fan=None):
         w = self.published()
         tid = w["published"]["roles"][0]["id"]
-        aid = work.apply(self.c, fan or self.fan, self.pid, {"task": tid, "experience": "会場探しを手伝えます", "consent": True})["id"]
+        aid = work.apply(self.c, fan or self.fan, self.pid, {"task": tid, "experience": "会場探しを手伝えます", "consent": True, "publicationRevision": work.public(self.c, w["slug"])["publicationRevision"]})["id"]
         return aid, tid
 
     def output(self):
@@ -111,7 +111,7 @@ class WorkspaceTest(unittest.TestCase):
 
     def test_free_apply_double_click_and_assignment_capacity(self):
         aid, tid = self.applied()
-        body = {"task": tid, "experience": "会場探しを手伝えます", "consent": True}
+        body = {"task": tid, "experience": "会場探しを手伝えます", "consent": True, "publicationRevision": work.public(self.c, self.get()["slug"])["publicationRevision"]}
         self.assertEqual(work.apply(self.c, self.fan, self.pid, body)["id"], aid)
         aid2 = work.apply(self.c, self.other, self.pid, body)["id"]
         work.application_action(self.c, self.uid, aid, "status", {"version": 1, "status": "担当"})
@@ -275,6 +275,30 @@ class WorkspaceTest(unittest.TestCase):
             self.problem(409, lambda:work.assist(self.c,self.uid,self.pid,{'requestId':s.ident(),'version':self.get()['version'],'prompt':'タスク整理'}))
         self.assertEqual(work.conversation(self.c,self.fan,aid)['id'],aid)
         self.assertIn(tid,[t['id'] for t in self.get()['draft']['tasks']])
+
+    def test_application_requires_the_public_conditions_the_fan_read(self):
+        w = self.published()
+        public = work.public(self.c, w['slug'])
+        body = {'task': public['roles'][0]['id'], 'experience': '参加します', 'consent': True,
+                'publicationRevision': public['publicationRevision']}
+        d = w['draft'];d['public']['conditions'] = '変更後の参加条件'
+        w = self.edit(d)
+        work.publish(self.c, self.uid, self.pid, {'version': w['version'], 'consent': True})
+        self.problem(409, lambda: work.apply(self.c, self.fan, self.pid, body))
+        self.assertEqual(self.c.execute('SELECT COUNT(*) FROM applications').fetchone()[0], 0)
+        body['publicationRevision'] = work.public(self.c, w['slug'])['publicationRevision']
+        first = work.apply(self.c, self.fan, self.pid, body)
+        body['publicationRevision'] = public['publicationRevision']
+        self.assertEqual(work.apply(self.c, self.fan, self.pid, body), first)
+
+    def test_global_public_conditions_are_frozen_after_an_application(self):
+        aid, tid = self.applied()
+        w = self.get();before = work.public(self.c, w['slug'])
+        d = w['draft'];d['public']['conditions'] = '応募後に変更した参加費'
+        w = self.edit(d)
+        self.problem(409, lambda: work.publish(self.c, self.uid, self.pid, {'version': w['version'], 'consent': True}))
+        self.assertEqual(work.public(self.c, w['slug']), before)
+        self.assertEqual(work.conversation(self.c, self.fan, aid)['id'], aid)
 
 
 if __name__ == '__main__':

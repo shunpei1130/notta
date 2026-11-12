@@ -47,6 +47,7 @@ window.nottaWorkspace = (() => {
     stop();
     document.title=draft.title+'｜ノッタ';
     shell(`${header()}<div class="nw-tabs" role="tablist" aria-label="企画の操作">${tabs.map(([id,label])=>`<button role="tab" id="nw-tab-${id}" aria-controls="nw-panel" aria-selected="${tab===id}" tabindex="${tab===id?0:-1}" data-w-tab="${id}">${label}${id==='applications'&&current.applications.length?' '+current.applications.length:''}</button>`).join('')}</div><div class="nw-grid"><section class="nw-main" role="tabpanel" id="nw-panel" aria-labelledby="nw-tab-${tab}">${tab==='overview'?overview():tab==='tasks'?tasks():tab==='recruit'?recruit():tab==='artifacts'?artifacts():inbox(current.applications)}</section>${current.state==='archived'?'':aiBox()}</div>`);
+    if(tab==='recruit'&&current.applications.length) $('.nw-main').insertAdjacentHTML('afterbegin','<p class="banner">応募済みの企画案内と募集条件は固定されています。役割の条件を変える場合は、旧枠の受付を停止して新しいタスクを追加してください。本人用の準備内容は編集できます。</p>');
     if(current.state==='archived') { $$('input,textarea,select,#nw-save,#nw-add-task,#nw-add-artifact', $('.nw')).forEach(x=>x.disabled=true); }
     wire();
     if(tab==='applications'&&activeApplication&&current.applications.some(a=>a.id===activeApplication)) openThread(activeApplication);
@@ -155,7 +156,8 @@ window.nottaWorkspace = (() => {
   }
   function applyForm(p,tid) {
     const role=p.roles.find(r=>r.id===tid),dialog=$('#confirm-dialog');$('#confirm-content').innerHTML=`<h2 id="confirm-title">${esc(role.role)}に応募</h2><p>${esc(role.title)}</p><p class="text-block">${esc(role.terms)}</p><form id="nw-apply-form"><label>参加したい理由・できること<textarea name="experience" maxlength="2000" required></textarea></label><label class="check-label"><input type="checkbox" required><span>日程・作業内容・参加費や謝礼・権利などの条件を確認しました。</span></label><p class="nw-error" role="alert"></p><button class="button" type="submit">無料で応募する</button></form>`;dialog.showModal();
-    $('#nw-apply-form').addEventListener('submit',e=>{e.preventDefault();const f=e.currentTarget;busy($('button',f),async()=>{await api('/projects/'+p.id+'/apply',{task:tid,experience:f.elements.experience.value,consent:true});dialog.close();navigate('/workspace');},$('.nw-error',f));});
+    $('#nw-apply-form').addEventListener('submit',e=>{e.preventDefault();const f=e.currentTarget;busy($('button',f),async()=>{await api('/projects/'+p.id+'/apply',{task:tid,experience:f.elements.experience.value,consent:true,publicationRevision:p.publicationRevision});dialog.close();navigate('/workspace');},$('.nw-error',f));});
   }
   return {render,publicPage,save};
 })();
+
