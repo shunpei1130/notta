@@ -80,9 +80,33 @@ def validate(value):
     return result
 
 
+def _change_summary(before, after):
+    changes = []
+    for key, label in (("title", "企画名"), ("overview", "企画の概要"), ("firstDeliverable", "最初の成果物")):
+        if before.get(key) != after.get(key):
+            changes.append(label)
+    if before.get("public") != after.get("public"):
+        changes.append("募集ページの下書き")
+    labels = {"title": "名前", "instructions": "作業内容", "role": "役割", "estimate": "時間", "completion": "完了条件",
+              "status": "進捗", "recruit": "募集対象", "capacity": "募集人数", "offer": "募集条件", "termsConfirmed": "条件確認"}
+    for collection, label in (("tasks", "タスク"), ("artifacts", "資料")):
+        previous = {item["id"]: item for item in before.get(collection, [])}
+        current = {item["id"]: item for item in after.get(collection, [])}
+        for key, item in current.items():
+            name = label + "「" + item["title"] + "」"
+            if key not in previous:
+                changes.append(name + "を追加")
+            elif item != previous[key]:
+                fields = [value for field, value in labels.items() if previous[key].get(field) != item.get(field)] if collection == "tasks" else ["内容"]
+                changes.append(name + "の" + "・".join(fields))
+        changes.extend(label + "「" + item["title"] + "」を削除" for key, item in previous.items() if key not in current)
+    return "、".join(changes) if changes else "内容の変更なし"
+
+
 def _save(c, row, draft, reason):
     draft = validate(draft)
-    prior = {t["id"] for t in json.loads(row["draft"])["tasks"]}
+    before = json.loads(row["draft"])
+    prior = {t["id"] for t in before["tasks"]}
     next_ids = {t["id"] for t in draft["tasks"]}
     for tid in prior - next_ids:
         s.require(not c.execute("SELECT 1 FROM applications WHERE task=?", (tid,)).fetchone(), 409,
@@ -100,7 +124,7 @@ def _save(c, row, draft, reason):
     encoded = core.dumps(draft)
     c.execute("UPDATE svc_projects SET draft=?,version=?,updated=? WHERE project=?", (encoded, version, s.stamp(), row["project"]))
     c.execute("UPDATE projects SET title=?,goal=?,output=?,version=version+1 WHERE id=?", (draft["title"], draft["overview"], draft["firstDeliverable"], row["project"]))
-    c.execute("INSERT INTO svc_workspace_history(project,version,draft,reason,created) VALUES(?,?,?,?,?)", (row["project"], version, encoded, reason, s.stamp()))
+    c.execute("INSERT INTO svc_workspace_history(project,version,draft,reason,created) VALUES(?,?,?,?,?)", (row["project"], version, encoded, reason + "：" + _change_summary(before, draft), s.stamp()))
     return version
 
 

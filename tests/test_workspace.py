@@ -170,6 +170,7 @@ class WorkspaceTest(unittest.TestCase):
             work.assist(self.c, self.uid, self.pid, request)
         self.assertEqual(generate.call_count, 1)
         self.assertEqual(self.get()["draft"]["artifacts"][0]["title"], "当日の進行表")
+        self.assertIn('資料「当日の進行表」を追加', work.history(self.c, self.uid, self.pid)['items'][0]['reason'])
         self.assertEqual(self.get()["state"], "draft")
         self.assertEqual(self.get()["aiQuota"]["used"], 1)
         self.assertEqual(tuple(self.c.execute("SELECT spent_yen,reserved_yen FROM svc_budgets").fetchone()), (2, 0))
@@ -216,6 +217,7 @@ class WorkspaceTest(unittest.TestCase):
         work.restore(self.c, self.uid, self.pid, {"version": w["version"], "restoreVersion": 1})
         self.assertEqual(self.get()["draft"]["overview"], initial()["overview"])
         self.assertEqual(len(work.history(self.c, self.uid, self.pid)["items"]), 3)
+        self.assertIn('企画の概要', work.history(self.c, self.uid, self.pid)['items'][0]['reason'])
         self.assertEqual(intake.detail(self.c, self.uid, self.intake_id)["turns"], before["turns"])
 
     def test_wsgi_dispatch_and_csrf_for_free_flow(self):

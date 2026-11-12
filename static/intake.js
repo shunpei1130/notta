@@ -116,6 +116,27 @@ window.nottaIntake = (() => {
       <button class="button" type="submit">${item.step === 10 ? '回答を送信してタスク分解を依頼する' : '回答を保存して次へ →'}</button></form>
       <button class="text-button" id="refresh-intake">回答の保存状況を確認する</button><p class="privacy-note">回答はご本人と運営だけが確認できます。秘密情報や不要な個人情報は入力しないでください。</p></section>${history(item)}</div>`);
     const form = $('#answer-form'), field = form.elements.answer;
+    if (state.config.workspaceMode) {
+      const choices = [
+        ['ファンと交流したい', 'みんなで作品をつくりたい', '新しい活動に挑戦したい'],
+        ['イベント・交流会を開きたい', '作品・商品をつくりたい', 'お店・場所をつくりたい'],
+        ['今のファンに届けたい', '新しいファンにも届けたい', '地域の人に楽しんでほしい'],
+        ['具体的な日程がある（詳しく追記）', '1〜3か月以内を目指したい', '時期から相談したい'],
+        ['予算が決まっている（詳しく追記）', '費用を抑えて小さく始めたい', 'まだ見積もれていない'],
+        ['アイデア・制作を担当できる', '告知・発信が得意', '当日の進行を担当できる'],
+        ['手伝ってくれる人がいる', '使える素材・道具がある', '使える場所がある', 'これから探したい'],
+        ['アイデアを一緒に考えたい', '制作や準備を手伝ってほしい', '当日の運営に協力してほしい'],
+        ['公開する情報を相談したい', '権利・クレジットを確認したい', '費用や参加条件を先に決めたい'],
+        ['追加の要望は特になし', '気になっていることがある（詳しく追記）'],
+      ][item.step - 1];
+      field.insertAdjacentHTML('beforebegin', '<div><p class="hint">回答のヒント。選んだあとも自由に書き換えたり、詳しく追記できます。</p><div class="toolbar">' + choices.map(value => '<button class="button secondary compact" type="button" data-answer-choice="' + esc(value) + '">' + esc(value) + '</button>').join('') + '</div></div>');
+      $$('[data-answer-choice]', form).forEach(button => button.addEventListener('click', () => {
+        const prior = field.value.trim();
+        const value = !prior || ['未定', 'おまかせ'].includes(prior) ? button.dataset.answerChoice : prior + '\n' + button.dataset.answerChoice;
+        if (value.length > field.maxLength) return notice('回答は2,000文字以内で入力してください。', true);
+        field.value = value; field.dispatchEvent(new Event('input')); field.focus();
+      }));
+    }
     field.addEventListener('input', () => { state.dirty = true; writeLocal(key, {value:field.value}); });
     $$('[data-quick]').forEach(button => button.addEventListener('click', () => {
       field.value = button.dataset.quick; field.dispatchEvent(new Event('input')); field.focus();
