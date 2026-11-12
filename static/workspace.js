@@ -49,6 +49,15 @@ window.nottaWorkspace = (() => {
     shell(`${header()}<div class="nw-tabs" role="tablist" aria-label="企画の操作">${tabs.map(([id,label])=>`<button role="tab" id="nw-tab-${id}" aria-controls="nw-panel" aria-selected="${tab===id}" tabindex="${tab===id?0:-1}" data-w-tab="${id}">${label}${id==='applications'&&current.applications.length?' '+current.applications.length:''}</button>`).join('')}</div><div class="nw-grid"><section class="nw-main" role="tabpanel" id="nw-panel" aria-labelledby="nw-tab-${tab}">${tab==='overview'?overview():tab==='tasks'?tasks():tab==='recruit'?recruit():tab==='artifacts'?artifacts():inbox(current.applications)}</section>${current.state==='archived'?'':aiBox()}</div>`);
     if(tab==='recruit'&&current.applications.length) $('.nw-main').insertAdjacentHTML('afterbegin','<p class="banner">応募済みの企画案内と募集条件は固定されています。役割の条件を変える場合は、旧枠の受付を停止して新しいタスクを追加してください。本人用の準備内容は編集できます。</p>');
     if(current.state==='archived') { $$('input,textarea,select,#nw-save,#nw-add-task,#nw-add-artifact', $('.nw')).forEach(x=>x.disabled=true); }
+    if(current.readOnly) {
+      $('.nw').insertAdjacentHTML('afterbegin','<p class="banner">運営の閲覧モード：本人と同じ企画・準備・募集・資料を確認しています。変更や公開はできません。<a href="/admin/intakes">受付一覧へ戻る</a></p>');
+      $('.nw-ai')?.remove();
+      if(tab==='applications') $('.nw-main').innerHTML='<div class="nw-empty">応募者との会話は企画者と当該応募者だけが閲覧できます。</div>';
+      if(tab==='recruit'&&current.published.roles) $('.nw-main').insertAdjacentHTML('beforeend','<section class="nw-card"><h2>現在公開されている内容</h2>'+previewHtml(current.published,current.published.roles,false)+'</section>');
+      $$('input,textarea,select,button', $('.nw')).forEach(el=>{if(!el.hasAttribute('data-w-tab'))el.disabled=true;});
+      $$('[data-w-tab]').forEach((b,i,all)=>{b.addEventListener('click',()=>{tab=b.dataset.wTab;draw();$('#nw-tab-'+tab).focus();});b.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();all[e.key==='Home'?0:e.key==='End'?all.length-1:(i+(e.key==='ArrowLeft'?-1:1)+all.length)%all.length].click();}});});
+      return;
+    }
     wire();
     if(tab==='applications'&&activeApplication&&current.applications.some(a=>a.id===activeApplication)) openThread(activeApplication);
   }
@@ -142,6 +151,8 @@ window.nottaWorkspace = (() => {
     stop();if(!state.me)return false;
     if(/^\/intakes\/[a-f0-9]{24}$/.test(path)) {const item=await api(path);if(item.projectId){navigate('/workspace#project='+item.projectId);return true;}return false;}
     if(path!=='/workspace')return false;
+    const inspect=new URLSearchParams(location.search).get('inspectIntake');
+    if(inspect){current=await api('/admin/intakes/'+encodeURIComponent(inspect)+'/workspace');draft=structuredClone(current.draft);state.dirty=false;tab='overview';draw();return true;}
     const id=new URLSearchParams(location.hash.slice(1)).get('project');
     if(id&&(state.me.workspaceProjects||[]).some(p=>p.id===id)){tab=new URLSearchParams(location.hash.slice(1)).get('tab')||'overview';if(!tabs.some(t=>t[0]===tab))tab='overview';await load(id);return true;}
     if(new URLSearchParams(location.search).has('legacy'))return false;

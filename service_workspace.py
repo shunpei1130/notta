@@ -201,7 +201,9 @@ def operator_detail(c, operator, intake_id):
     source = intake.row(c, intake_id, operator, True)
     linked = c.execute("SELECT project FROM svc_workspaces WHERE intake=?", (intake_id,)).fetchone()
     s.require(linked, 404, "まだ企画として提供されていません。")
-    return detail(c, source["user_id"], linked[0])
+    result = detail(c, source["user_id"], linked[0])
+    result.update(readOnly=True, applications=[], messages=[])
+    return result
 
 
 def detail(c, uid, pid):

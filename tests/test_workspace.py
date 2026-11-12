@@ -87,6 +87,10 @@ class WorkspaceTest(unittest.TestCase):
         self.problem(404, lambda: work.detail(self.c, self.other, self.pid))
         self.problem(403, lambda: work.operator_detail(self.c, self.other, self.intake_id))
         self.assertEqual(work.operator_detail(self.c, self.operator, self.intake_id)["id"], self.pid)
+        preview = work.operator_detail(self.c, self.operator, self.intake_id)
+        self.assertTrue(preview["readOnly"])
+        self.assertEqual(preview["applications"], [])
+        self.assertEqual(preview["messages"], [])
         self.problem(403, lambda: work.deliver(self.c, self.other, self.intake_id, self.data))
 
     def test_public_snapshot_only_explicit_fields_and_stable_ids(self):

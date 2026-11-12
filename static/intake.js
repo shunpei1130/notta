@@ -259,7 +259,7 @@ window.nottaIntake = (() => {
     wireEditor();
     if (state.config.workspaceMode && item.state !== 'interview') {
       const area = document.createElement('section'); area.className = 'panel';
-      area.innerHTML = item.projectId ? '<h2>本人の企画へ反映済み</h2><p>企画・タスク・AI修正・募集・メッセージの画面につながっています。再度届けても本人の編集を上書きしません。</p><button class="button secondary compact" id="inspect-workspace">反映された内容を確認</button><div id="workspace-inspection"></div>' : '<h2>アプリで進められる企画として届ける</h2><p>保存した企画とタスクを本人の画面へ反映します。募集公開とメール送信は行いません。協力者を募集する役割は、本人が企画画面で選べます。</p><button class="button" id="deliver-workspace">本人の企画へ反映する（メール送信なし）</button>';
+      area.innerHTML = item.projectId ? '<h2>本人の企画へ反映済み</h2><p>企画・タスク・AI修正・募集・メッセージの画面につながっています。再度届けても本人の編集を上書きしません。</p><a class="button secondary compact" href="/workspace?inspectIntake=' + item.id + '">本人の画面を見る（閲覧のみ）</a><div id="workspace-inspection"></div>' : '<h2>アプリで進められる企画として届ける</h2><p>保存した企画とタスクを本人の画面へ反映します。募集公開とメール送信は行いません。協力者を募集する役割は、本人が企画画面で選べます。</p><button class="button" id="deliver-workspace">本人の企画へ反映する（メール送信なし）</button>';
       $('#result-editor').append(area);
       $('#deliver-workspace')?.addEventListener('click', () => busy($('#deliver-workspace'), async () => {
         if (state.dirty) { notice('先に下書きを保存してください。', true); return; }
