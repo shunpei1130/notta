@@ -196,14 +196,50 @@ def ai_quota(c, pid):
     return {"used": count, "limit": LIMIT}
 
 
-def operator_detail(c, operator, intake_id):
+def _operator_workspace(c, operator, intake_id):
+    require_enabled()
     intake.require_operator(c, operator)
     source = intake.row(c, intake_id, operator, True)
     linked = c.execute("SELECT project FROM svc_workspaces WHERE intake=?", (intake_id,)).fetchone()
     s.require(linked, 404, "まだ企画として提供されていません。")
-    result = detail(c, source["user_id"], linked[0])
-    result.update(readOnly=True, applications=[], messages=[])
+    return source, linked[0]
+
+
+def operator_detail(c, operator, intake_id):
+    source, pid = _operator_workspace(c, operator, intake_id)
+    result = detail(c, source["user_id"], pid)
+    protected = [r[0] for r in c.execute("SELECT DISTINCT task FROM applications WHERE project=?", (pid,))]
+    recipient = c.execute("SELECT name,email FROM users WHERE id=?", (source["user_id"],)).fetchone()
+    result.update(readOnly=True, operatorMode=True, canEdit=result["state"] != "archived",
+                  recipient=dict(recipient), protectedTaskIds=protected, applications=[], messages=[])
     return result
+
+
+def operator_edit(c, operator, intake_id, data):
+    c.execute("BEGIN IMMEDIATE")
+    source, pid = _operator_workspace(c, operator, intake_id)
+    row = _editable(c, source["user_id"], pid, data.get("version"))
+    _save(c, row, data.get("draft"), "運営が編集")
+    core.event(c, operator, "workspace_edited_operator", pid)
+    c.commit()
+    return operator_detail(c, operator, intake_id)
+
+
+def operator_history(c, operator, intake_id):
+    source, pid = _operator_workspace(c, operator, intake_id)
+    return history(c, source["user_id"], pid)
+
+
+def operator_restore(c, operator, intake_id, data):
+    c.execute("BEGIN IMMEDIATE")
+    source, pid = _operator_workspace(c, operator, intake_id)
+    row = _editable(c, source["user_id"], pid, data.get("version"))
+    target = c.execute("SELECT draft FROM svc_workspace_history WHERE project=? AND version=?", (pid, data.get("restoreVersion"))).fetchone()
+    s.require(target, 404)
+    _save(c, row, json.loads(target[0]), "運営が履歴 第" + str(data.get("restoreVersion")) + "版から復元")
+    core.event(c, operator, "workspace_restored_operator", pid)
+    c.commit()
+    return operator_detail(c, operator, intake_id)
 
 
 def detail(c, uid, pid):

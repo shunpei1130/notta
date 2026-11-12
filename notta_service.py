@@ -127,9 +127,9 @@ def dispatch(handler, method, path):
                     handler.respond(200, dashboard(c, user))
                     return
                 if workspace.enabled():
-                    operator_workspace = re.fullmatch(r"/api/service/admin/intakes/([a-f0-9]{24})/workspace", path)
+                    operator_workspace = re.fullmatch(r"/api/service/admin/intakes/([a-f0-9]{24})/workspace(/history)?", path)
                     if operator_workspace:
-                        handler.respond(200, workspace.operator_detail(c, user["id"], operator_workspace[1]))
+                        handler.respond(200, (workspace.operator_history if operator_workspace[2] else workspace.operator_detail)(c, user["id"], operator_workspace[1]))
                         return
                     thread = re.fullmatch(r"/api/service/applications/([a-f0-9]{24})/messages", path)
                     history = re.fullmatch(r"/api/service/projects/([a-f0-9]{24})/history", path)
@@ -149,6 +149,11 @@ def dispatch(handler, method, path):
             s.require(hmac.compare_digest(handler.headers.get("X-CSRF-Token", ""), user["csrf"]), 403, "操作確認が切れました。再ログインしてください。")
             uid = user["id"]
             if workspace.enabled():
+                operator_action = re.fullmatch(r"/api/service/admin/intakes/([a-f0-9]{24})/workspace/(edit|restore)", path)
+                if operator_action:
+                    functions = {"edit": workspace.operator_edit, "restore": workspace.operator_restore}
+                    handler.respond(200, functions[operator_action[2]](c, uid, operator_action[1], data))
+                    return
                 delivery = re.fullmatch(r"/api/service/admin/intakes/([a-f0-9]{24})/deliver", path)
                 project_action = re.fullmatch(r"/api/service/projects/([a-f0-9]{24})/(edit|assist|publish|apply|restore|close-role)", path)
                 message_action = re.fullmatch(r"/api/service/applications/([a-f0-9]{24})/(messages|read)", path)

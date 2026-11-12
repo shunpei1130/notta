@@ -93,6 +93,104 @@ class WorkspaceTest(unittest.TestCase):
         self.assertEqual(preview["messages"], [])
         self.problem(403, lambda: work.deliver(self.c, self.other, self.intake_id, self.data))
 
+    def test_operator_updates_shared_draft_and_records_the_actual_actor(self):
+        original = self.get()
+        d = copy.deepcopy(original['draft'])
+        d['overview'] = '運営から追加した準備案'
+        new_task = {**copy.deepcopy(d['tasks'][0]), 'id': s.ident(), 'title': '運営が追加したタスク'}
+        d['tasks'].append(new_task)
+        d['artifacts'].append({'id': s.ident(), 'title': '運営の準備メモ', 'body': '会場の条件を本人が確認する', 'taskId': new_task['id']})
+        result = work.operator_edit(self.c, self.operator, self.intake_id, {'version': original['version'], 'draft': d})
+        owner = self.get()
+        self.assertEqual(owner['draft'], d)
+        self.assertEqual(owner['version'], original['version'] + 1)
+        self.assertEqual([t['id'] for t in owner['draft']['tasks'][:14]], [t['id'] for t in original['draft']['tasks']])
+        self.assertEqual(owner['published'], {})
+        self.assertTrue(result['canEdit'])
+        self.assertEqual(result['recipient']['email'], self.c.execute('SELECT email FROM users WHERE id=?', (self.uid,)).fetchone()[0])
+        self.assertEqual(result['applications'], [])
+        self.assertEqual(result['messages'], [])
+        self.assertIn('運営が編集', work.history(self.c, self.uid, self.pid)['items'][0]['reason'])
+        event = self.c.execute("SELECT user_id,project FROM svc_events WHERE event='workspace_edited_operator'").fetchone()
+        self.assertEqual(tuple(event), (self.operator, self.pid))
+        self.assertEqual(self.mail.call_count, 1)
+
+    def test_operator_edit_preserves_applications_assignment_messages_and_public_conditions(self):
+        aid, tid = self.applied()
+        work.application_action(self.c, self.uid, aid, 'status', {'version': 1, 'status': '担当'})
+        work.send_message(self.c, self.fan, aid, {'body': '事前に相談したいです', 'requestId': s.ident()})
+        before = self.get()
+        d = copy.deepcopy(before['draft'])
+        d['public']['conditions'] = '運営が検討している非公開の条件案'
+        task = next(t for t in d['tasks'] if t['id'] == tid)
+        task.update(instructions='本人用の準備メモを追加', status='進行中')
+        result = work.operator_edit(self.c, self.operator, self.intake_id, {'version': before['version'], 'draft': d})
+        self.assertIn(tid, result['protectedTaskIds'])
+        self.assertEqual(self.get()['published'], before['published'])
+        self.assertEqual(work.public(self.c, before['slug'])['conditions'], '条件は当事者と合意')
+        thread = work.conversation(self.c, self.fan, aid)
+        self.assertEqual(thread['status'], '担当')
+        self.assertEqual(thread['messages'][0]['body'], '事前に相談したいです')
+        self.problem(404, lambda: work.conversation(self.c, self.operator, aid))
+        d['tasks'] = [t for t in d['tasks'] if t['id'] != tid]
+        self.problem(409, lambda: work.operator_edit(self.c, self.operator, self.intake_id, {'version': result['version'], 'draft': d}))
+        self.assertEqual(self.get()['applications'][0]['id'], aid)
+
+    def test_operator_and_owner_reject_stale_saves_in_both_directions(self):
+        stale = self.get()
+        d = copy.deepcopy(stale['draft']);d['overview'] = '本人が先に変更'
+        latest = self.edit(d)
+        self.problem(409, lambda: work.operator_edit(self.c, self.operator, self.intake_id, {'version': stale['version'], 'draft': stale['draft']}))
+        d = copy.deepcopy(latest['draft']);d['overview'] = '本人の変更を確認して運営が変更'
+        result = work.operator_edit(self.c, self.operator, self.intake_id, {'version': latest['version'], 'draft': d})
+        self.problem(409, lambda: work.edit(self.c, self.uid, self.pid, {'version': latest['version'], 'draft': latest['draft']}))
+        self.problem(409, lambda: work.operator_restore(self.c, self.operator, self.intake_id, {'version': latest['version'], 'restoreVersion': 1}))
+        self.assertEqual(self.get()['draft']['overview'], '本人の変更を確認して運営が変更')
+        self.assertEqual(self.get()['version'], result['version'])
+
+    def test_operator_restore_uses_current_shared_history_and_records_actor(self):
+        d = self.get()['draft'];d['overview'] = '本人による修正'
+        latest = self.edit(d)
+        history = work.operator_history(self.c, self.operator, self.intake_id)
+        self.assertEqual(history, work.history(self.c, self.uid, self.pid))
+        restored = work.operator_restore(self.c, self.operator, self.intake_id, {'version': latest['version'], 'restoreVersion': 1})
+        self.assertEqual(restored['draft']['overview'], initial()['overview'])
+        self.assertEqual(restored['published'], {})
+        self.assertIn('運営が履歴', work.history(self.c, self.uid, self.pid)['items'][0]['reason'])
+        event = self.c.execute("SELECT user_id FROM svc_events WHERE event='workspace_restored_operator'").fetchone()
+        self.assertEqual(event[0], self.operator)
+
+    def test_operator_restore_cannot_remove_a_task_with_an_application(self):
+        w = self.published()
+        d = w['draft'];task = copy.deepcopy(d['tasks'][1]);task['id'] = s.ident();task['recruit'] = True;d['tasks'].append(task)
+        w = work.operator_edit(self.c, self.operator, self.intake_id, {'version': w['version'], 'draft': d})
+        work.publish(self.c, self.uid, self.pid, {'version': w['version'], 'consent': True})
+        public = work.public(self.c, w['slug'])
+        aid = work.apply(self.c, self.fan, self.pid, {'task': task['id'], 'experience': '協力します', 'consent': True, 'publicationRevision': public['publicationRevision']})['id']
+        self.problem(409, lambda: work.operator_restore(self.c, self.operator, self.intake_id, {'version': self.get()['version'], 'restoreVersion': 1}))
+        self.assertEqual(work.conversation(self.c, self.fan, aid)['id'], aid)
+
+    def test_operator_write_routes_require_verified_operator_csrf_and_scoped_version(self):
+        path = '/api/service/admin/intakes/'+self.intake_id+'/workspace'
+        data = {'version': self.get()['version'], 'draft': self.get()['draft'], 'owner': self.uid, 'project': self.pid}
+        self.assertEqual(self.request('POST', path+'/edit', data, uid=self.uid)['status'], 403)
+        self.assertEqual(self.request('POST', path+'/edit', data, uid=self.operator, csrf='wrong')['status'], 403)
+        self.assertEqual(self.request('GET', path+'/history', uid=self.other)['status'], 403)
+        self.assertEqual(self.request('GET', path+'/history', uid=self.operator)['status'], 200)
+        self.assertEqual(self.request('POST', path+'/edit', data, uid=self.operator)['status'], 200)
+        self.assertEqual(self.request('POST', '/api/service/projects/'+self.pid+'/publish', {'version': self.get()['version'], 'consent': True}, uid=self.operator)['status'], 404)
+        self.c.execute('UPDATE svc_accounts SET verified_at=0 WHERE user_id=?', (self.operator,));self.c.commit()
+        self.problem(403, lambda: work.operator_edit(self.c, self.operator, self.intake_id, {'version': self.get()['version'], 'draft': self.get()['draft']}))
+
+    def test_operator_cannot_edit_archived_or_disabled_workspaces(self):
+        self.c.execute("UPDATE svc_projects SET state='archived' WHERE project=?", (self.pid,));self.c.commit()
+        result = work.operator_detail(self.c, self.operator, self.intake_id)
+        self.assertFalse(result['canEdit'])
+        self.problem(409, lambda: work.operator_edit(self.c, self.operator, self.intake_id, {'version': result['version'], 'draft': result['draft']}))
+        self.problem(409, lambda: work.operator_restore(self.c, self.operator, self.intake_id, {'version': result['version'], 'restoreVersion': 1}))
+        with patch.dict(os.environ, {'NOTTA_WORKSPACE_ENABLED': 'no'}):
+            self.problem(503, lambda: work.operator_history(self.c, self.operator, self.intake_id))
+
     def test_public_snapshot_only_explicit_fields_and_stable_ids(self):
         w = self.published()
         public = work.public(self.c, w["slug"])

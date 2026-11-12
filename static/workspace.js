@@ -2,6 +2,7 @@
 window.nottaWorkspace = (() => {
   let current = null, draft = null, tab = 'overview', activeApplication = '', thread = null, lastCursor = 0, timer = null;
   let pendingSend = null;
+  let operatorContext = null;
   const tabs = [['overview','企画概要'],['tasks','準備タスク'],['recruit','募集'],['applications','応募・メッセージ'],['artifacts','資料']];
   const icons = {bulb:'<path d="M9 18h6M10 21h4M8 14a6 6 0 1 1 8 0l-1 2H9z"/>',people:'<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v3"/>'};
   const icon = name => '<div class="nw-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + icons[name] + '</svg></div>';
@@ -11,19 +12,28 @@ window.nottaWorkspace = (() => {
   function stop() { clearInterval(timer); timer = null; }
   function dirty() { state.dirty = true; const el = $('#nw-save-state'); if (el) el.textContent = '未保存の変更があります'; }
   function shell(body) { main('<div class="nw">' + body + '</div>'); }
+  function projectApi(action) {
+    return operatorContext ? '/admin/intakes/'+operatorContext.intake+'/workspace/'+action : '/projects/'+current.id+'/'+action;
+  }
+  function adopt(value) {
+    current=value;
+    if(operatorContext)current.readOnly=!operatorContext.edit||!current.canEdit;
+    draft=structuredClone(current.draft);
+  }
   async function copyText(value) {
     try { await navigator.clipboard.writeText(value); notice('コピーしました。'); }
     catch { const box=document.createElement('textarea'); box.value=value; document.body.append(box); box.select(); const ok=document.execCommand('copy'); box.remove(); notice(ok?'コピーしました。':'コピーできませんでした。表示された内容を選択してコピーしてください。',!ok); }
   }
   function header() {
-    return `<p class="nw-path"><a href="/workspace">マイページ</a><span>›</span><span>自分の企画</span></p><div class="nw-top"><div><p class="eyebrow">LET'S CREATE TOGETHER</p><h1>${esc(draft.title)}</h1><span class="nw-tag">初回1企画・無料</span><span class="nw-tag">${current.state === 'published' ? '募集ページ公開中' : current.state === 'archived' ? '完了・閲覧のみ' : '準備中・本人のみ'}</span></div><div class="nw-actions"><button class="button secondary compact" id="nw-history">編集履歴</button><button class="button compact" id="nw-save">変更を保存</button></div></div><p class="nw-save" id="nw-save-state">${state.dirty ? '未保存の変更があります' : '保存済み · 第' + current.version + '版'}</p>`;
+    const breadcrumb=operatorContext?`<a href="/admin/intakes/${operatorContext.intake}">運営の受付詳細</a><span>›</span><span>利用者の企画</span>`:'<a href="/workspace">マイページ</a><span>›</span><span>自分の企画</span>';
+    return `<p class="nw-path">${breadcrumb}</p><div class="nw-top"><div><p class="eyebrow">LET'S CREATE TOGETHER</p><h1>${esc(draft.title)}</h1><span class="nw-tag">初回1企画・無料</span><span class="nw-tag">${current.state === 'published' ? '募集ページ公開中' : current.state === 'archived' ? '完了・閲覧のみ' : '準備中・本人のみ'}</span></div><div class="nw-actions"><button class="button secondary compact" id="nw-history">編集履歴</button><button class="button compact" id="nw-save">${operatorContext?'本人の企画に保存':'変更を保存'}</button></div></div><p class="nw-save" id="nw-save-state">${state.dirty ? '未保存の変更があります' : '保存済み · 第' + current.version + '版'}</p>`;
   }
   function overview() {
     return `<section class="nw-card">${icon('bulb')}<h2>やりたいことを、仲間と動く企画に。</h2><p class="hint">運営から届いた企画を、自分の言葉に整えましょう。ここにある内容は、公開操作をするまでご本人と運営だけが確認できます。</p><form id="nw-overview" class="form-stack">${field('title','企画名',draft.title,120,false,'data-project="title"')}${field('overview','企画の概要',draft.overview,4000,true,'data-project="overview"')}${field('firstDeliverable','最初につくるものと目指すこと',draft.firstDeliverable,2000,true,'data-project="firstDeliverable"')}</form></section>`;
   }
   function tasks() {
     const done = draft.tasks.filter(t=>t.status==='完了').length;
-    return `<div class="nw-progress"><progress max="${draft.tasks.length}" value="${done}" aria-label="完了したタスク"></progress><span>${done} / ${draft.tasks.length}件が完了</span><button class="button secondary compact" id="nw-add-task" ${draft.tasks.length>=50?'disabled':''}>＋ タスクを追加</button></div><p class="hint">募集する作業は「募集」から選べます。本人用の準備と、協力者にお願いする仕事を分けて進めましょう。</p>${draft.tasks.map((t,i)=>`<article class="nw-card nw-task"><details><summary><span class="nw-number">${String(i+1).padStart(2,'0')}</span><span>${esc(t.title)}</span></summary><div>${taskKeys.map(([k,label,max])=>field(k,label,t[k],max,k!=='title'&&k!=='role'&&k!=='estimate',`data-task="${t.id}" data-key="${k}"`)).join('')}<label>進捗<select data-task="${t.id}" data-key="status">${['未着手','進行中','完了'].map(st=>`<option ${st===t.status?'selected':''}>${st}</option>`).join('')}</select></label><div class="nw-actions"><button class="text-button" data-remove-task="${t.id}" ${current.applications.some(a=>a.task===t.id)?'disabled':''}>このタスクを削除</button><button class="text-button" data-ai-task="${t.id}">この作業をAIに相談</button></div></div></details><p class="nw-task-meta">${esc(t.role || '役割は相談して決定')} · ${esc(t.estimate || '時間は未定')} · ${esc(t.status)}${t.recruit?' · 募集候補':''}</p></article>`).join('')}`;
+    return `<div class="nw-progress"><progress max="${draft.tasks.length}" value="${done}" aria-label="完了したタスク"></progress><span>${done} / ${draft.tasks.length}件が完了</span><button class="button secondary compact" id="nw-add-task" ${draft.tasks.length>=50?'disabled':''}>＋ タスクを追加</button></div><p class="hint">募集する作業は「募集」から選べます。本人用の準備と、協力者にお願いする仕事を分けて進めましょう。</p>${draft.tasks.map((t,i)=>`<article class="nw-card nw-task"><details><summary><span class="nw-number">${String(i+1).padStart(2,'0')}</span><span>${esc(t.title)}</span></summary><div>${taskKeys.map(([k,label,max])=>field(k,label,t[k],max,k!=='title'&&k!=='role'&&k!=='estimate',`data-task="${t.id}" data-key="${k}"`)).join('')}<label>進捗<select data-task="${t.id}" data-key="status">${['未着手','進行中','完了'].map(st=>`<option ${st===t.status?'selected':''}>${st}</option>`).join('')}</select></label><div class="nw-actions"><button class="text-button" data-remove-task="${t.id}" ${(current.applications.some(a=>a.task===t.id)||current.protectedTaskIds?.includes(t.id))?'disabled':''}>このタスクを削除</button><button class="text-button" data-ai-task="${t.id}">この作業をAIに相談</button></div></div></details><p class="nw-task-meta">${esc(t.role || '役割は相談して決定')} · ${esc(t.estimate || '時間は未定')} · ${esc(t.status)}${t.recruit?' · 募集候補':''}</p></article>`).join('')}`;
   }
   function recruit() {
     return `<section class="nw-card"><h2>タスクと役割を、募集ページに。</h2><p class="hint">公開する内容だけを入力してください。下書きを保存しても、すでに公開したページは変わりません。</p>${publicKeys.map(([k,label,max])=>field(k,label,draft.public[k],max,k!=='title',`data-public="${k}"`)).join('')}</section><section class="nw-card"><h2>募集する役割を選ぶ</h2><p class="hint">協力者の応募は無料です。イベント参加費、実費、謝礼などとの関係は役割ごとに確認してください。</p>${draft.tasks.map(t=>`<div class="nw-card"><label class="check-label"><input type="checkbox" data-recruit="${t.id}" ${t.recruit?'checked':''}><span>${esc(t.title)}</span></label>${t.recruit?`<div>${taskKeys.map(([k,label,max])=>field(k,label,t.offer[k],max,k!=='title'&&k!=='role'&&k!=='estimate',`data-offer="${t.id}" data-key="${k}"`)).join('')}${field('terms','参加費・実費・謝礼・権利などの条件',t.offer.terms,2000,true,`data-offer="${t.id}" data-key="terms"`)}<label>募集人数<input type="number" min="1" max="50" value="${t.capacity}" data-capacity="${t.id}"></label><label class="check-label"><input type="checkbox" data-terms="${t.id}" ${t.termsConfirmed?'checked':''}><span>この役割の条件を確認しました</span></label>${current.published.roles?.some(r=>r.id===t.id&&!r.closed)?`<button class="button secondary compact" data-close-role="${t.id}">この役割の受付を停止</button>`:''}</div>`:''}</div>`).join('')}</section><div class="nw-actions"><button class="button" id="nw-preview">公開する内容を確認</button>${current.state==='published'?`<button class="button secondary" id="nw-copy-url">公開URLをコピー</button><a class="button secondary" href="/p/${current.slug}" target="_blank" rel="noopener">募集ページを見る ↗</a>`:''}<button class="button secondary" id="nw-copy-post">告知文をコピー</button></div>`;
@@ -39,7 +49,7 @@ window.nottaWorkspace = (() => {
     return `<aside class="nw-ai nw-card"><details class="nw-ai-details" ${innerWidth>=981?'open':''}><summary>AIと一緒に整える</summary><div><p class="hint">修正や準備資料づくりを相談できます。公開・送信・担当決定はご自身で行います。</p><form id="nw-ai-form"><label for="nw-prompt">お願いしたいこと</label><textarea id="nw-prompt" name="prompt" maxlength="1500" required placeholder="例：当日の進行表をつくって。料理と歓談の時間を分けたい。"></textarea><p class="nw-error" role="alert"></p><button class="button" type="submit" ${current.aiQuota.used>=current.aiQuota.limit?'disabled':''}>AIにお願いする</button></form><p class="hint">この企画のAI利用 ${current.aiQuota.used} / ${current.aiQuota.limit}回<br>手編集と共同作業は引き続き使えます。</p><div class="nw-ai-history" aria-label="AIとの相談履歴">${current.messages.slice(-6).map(m=>`<p><strong>${m.role==='user'?'あなた':'ノッタ'}</strong>${esc(m.body)}</p>`).join('')}</div></div></details></aside>`;
   }
   async function load(id, nextTab) {
-    stop(); current = await api('/projects/'+id); draft=structuredClone(current.draft); state.dirty=false;
+    stop(); adopt(await api('/projects/'+id)); state.dirty=false;
     if(nextTab)tab=nextTab;
     draw();
   }
@@ -47,13 +57,19 @@ window.nottaWorkspace = (() => {
     stop();
     document.title=draft.title+'｜ノッタ';
     shell(`${header()}<div class="nw-tabs" role="tablist" aria-label="企画の操作">${tabs.map(([id,label])=>`<button role="tab" id="nw-tab-${id}" aria-controls="nw-panel" aria-selected="${tab===id}" tabindex="${tab===id?0:-1}" data-w-tab="${id}">${label}${id==='applications'&&current.applications.length?' '+current.applications.length:''}</button>`).join('')}</div><div class="nw-grid"><section class="nw-main" role="tabpanel" id="nw-panel" aria-labelledby="nw-tab-${tab}">${tab==='overview'?overview():tab==='tasks'?tasks():tab==='recruit'?recruit():tab==='artifacts'?artifacts():inbox(current.applications)}</section>${current.state==='archived'?'':aiBox()}</div>`);
-    if(tab==='recruit'&&current.applications.length) $('.nw-main').insertAdjacentHTML('afterbegin','<p class="banner">応募済みの企画案内と募集条件は固定されています。役割の条件を変える場合は、旧枠の受付を停止して新しいタスクを追加してください。本人用の準備内容は編集できます。</p>');
+    if(tab==='recruit'&&(current.applications.length||current.protectedTaskIds?.length)) $('.nw-main').insertAdjacentHTML('afterbegin','<p class="banner">応募済みの企画案内と募集条件は固定されています。役割の条件を変える場合は、旧枠の受付を停止して新しいタスクを追加してください。本人用の準備内容は編集できます。</p>');
     if(current.state==='archived') { $$('input,textarea,select,#nw-save,#nw-add-task,#nw-add-artifact', $('.nw')).forEach(x=>x.disabled=true); }
-    if(current.readOnly) {
-      $('.nw').insertAdjacentHTML('afterbegin','<p class="banner">運営の閲覧モード：本人と同じ企画・準備・募集・資料を確認しています。変更や公開はできません。<a href="/admin/intakes">受付一覧へ戻る</a></p>');
+    if(operatorContext) {
+      const message=current.readOnly?'運営の閲覧モード：本人と同じ企画・準備・募集・資料を確認しています。':'運営の編集モード：保存すると本人の企画に反映されます。募集の公開・送信・担当決定は本人が行います。';
+      const editLink=current.readOnly&&current.canEdit?` <a class="button secondary compact" href="/workspace?editIntake=${operatorContext.intake}">この企画を編集する</a>`:'';
+      const recipient=current.recipient?'<p>対象：'+esc(current.recipient.name)+'（'+esc(current.recipient.email)+'）</p>':'';
+      $('.nw').insertAdjacentHTML('afterbegin','<div class="banner">'+recipient+message+editLink+' <a href="/admin/intakes">受付一覧へ戻る</a></div>');
       $('.nw-ai')?.remove();
+      $$('[data-ai-task],[data-close-role]').forEach(el=>el.remove());
       if(tab==='applications') $('.nw-main').innerHTML='<div class="nw-empty">応募者との会話は企画者と当該応募者だけが閲覧できます。</div>';
       if(tab==='recruit'&&current.published.roles) $('.nw-main').insertAdjacentHTML('beforeend','<section class="nw-card"><h2>現在公開されている内容</h2>'+previewHtml(current.published,current.published.roles,false)+'</section>');
+    }
+    if(current.readOnly) {
       $$('input,textarea,select,button', $('.nw')).forEach(el=>{if(!el.hasAttribute('data-w-tab'))el.disabled=true;});
       $$('[data-w-tab]').forEach((b,i,all)=>{b.addEventListener('click',()=>{tab=b.dataset.wTab;draw();$('#nw-tab-'+tab).focus();});b.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();all[e.key==='Home'?0:e.key==='End'?all.length-1:(i+(e.key==='ArrowLeft'?-1:1)+all.length)%all.length].click();}});});
       return;
@@ -63,11 +79,11 @@ window.nottaWorkspace = (() => {
   }
   async function save() {
     if(!state.dirty||!current)return;
-    current=await api('/projects/'+current.id+'/edit',{version:current.version,draft}); draft=structuredClone(current.draft);state.dirty=false;
+    adopt(await api(projectApi('edit'),{version:current.version,draft}));state.dirty=false;
     if($('#nw-save-state'))$('#nw-save-state').textContent='保存済み · 第'+current.version+'版';
   }
   function wire() {
-    $('#nw-save').addEventListener('click',()=>busy($('#nw-save'),async()=>{await save();notice('変更を保存しました。公開ページには反映していません。');}));
+    $('#nw-save').addEventListener('click',()=>busy($('#nw-save'),async()=>{await save();notice(operatorContext?'本人の企画に保存しました。募集の公開内容は変えていません。':'変更を保存しました。公開ページには反映していません。');}));
     $('#nw-history').addEventListener('click',()=>busy($('#nw-history'),showHistory));
     $$('[data-w-tab]').forEach((b,i,all)=>{
       b.addEventListener('click',()=>{tab=b.dataset.wTab;draw();$('#nw-tab-'+tab).focus();});
@@ -110,13 +126,14 @@ window.nottaWorkspace = (() => {
   }
   function showPreview() {
     const roles=draft.tasks.filter(t=>t.recruit).map(t=>({...t.offer,id:t.id,capacity:t.capacity}));
+    if(operatorContext){const dialog=$('#confirm-dialog');$('#confirm-content').innerHTML=`<div class="nw-preview"><h2 id="confirm-title">募集の下書きを確認</h2><p class="hint">公開は本人が内容を確認して行います。現在公開されている内容は変更していません。</p>${previewHtml(draft.public,roles)}</div>`;dialog.showModal();return;}
     const dialog=$('#confirm-dialog');$('#confirm-content').innerHTML=`<div class="nw-preview"><h2 id="confirm-title">公開前の確認</h2><p class="hint">以下の内容が誰でも見られる募集ページに表示されます。ヒアリングの原文や本人用の資料は公開しません。</p>${previewHtml(draft.public,roles)}<form id="nw-publish-form"><label class="check-label"><input type="checkbox" required><span>企画・募集する役割・人数・参加条件を確認し、この内容を公開します。</span></label><p class="nw-error" role="alert"></p><button class="button" type="submit">公開してURLを発行</button></form></div>`;dialog.showModal();
     $('#nw-publish-form').addEventListener('submit',e=>{e.preventDefault();const f=e.currentTarget;busy($('button',f),async()=>{current=await api('/projects/'+current.id+'/publish',{version:current.version,consent:true});draft=structuredClone(current.draft);dialog.close();draw();notice('募集ページを公開しました。URLをコピーして共有できます。');},$('.nw-error',f));});
   }
   async function showHistory() {
-    const result=await api('/projects/'+current.id+'/history');const dialog=$('#confirm-dialog');
+    const result=await api(projectApi('history'));const dialog=$('#confirm-dialog');
     $('#confirm-content').innerHTML=`<h2 id="confirm-title">編集履歴</h2><p class="hint">復元しても公開ページは変わりません。応募のあるタスクを消す復元はできません。</p>${result.items.map(h=>`<div class="nw-actions"><span>第${h.version}版 · ${esc(h.reason)} · ${date(h.created)}</span><button class="button secondary compact" data-restore="${h.version}">この版に戻す</button></div>`).join('')}<p class="nw-error" role="alert"></p>`;dialog.showModal();
-    $$('[data-restore]',dialog).forEach(b=>b.addEventListener('click',()=>busy(b,async()=>{await save();current=await api('/projects/'+current.id+'/restore',{version:current.version,restoreVersion:Number(b.dataset.restore)});draft=structuredClone(current.draft);state.dirty=false;dialog.close();draw();notice('履歴から復元しました。');},$('.nw-error',dialog))));
+    $$('[data-restore]',dialog).forEach(b=>b.addEventListener('click',()=>busy(b,async()=>{await save();adopt(await api(projectApi('restore'),{version:current.version,restoreVersion:Number(b.dataset.restore)}));state.dirty=false;dialog.close();draw();notice('履歴から復元しました。');},$('.nw-error',dialog))));
   }
   function wireThreads() {$$('[data-thread]').forEach(b=>b.addEventListener('click',()=>busy(b,async()=>{activeApplication=b.dataset.thread;await openThread(activeApplication);$$('[data-thread]').forEach(x=>x.setAttribute('aria-current',String(x.dataset.thread===activeApplication)));})));}
   function bubbles(messages) { return messages.map(m=>`<div class="nw-message ${m.mine?'mine':''}">${linkedText(m.body)}<small>${new Date(m.created*1000).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})}</small></div>`).join(''); }
@@ -148,11 +165,11 @@ window.nottaWorkspace = (() => {
     shell(`<div class="nw-top"><div><p class="eyebrow">YOUR PROJECTS</p><h1>${esc(state.me.user.name)}さんのマイページ</h1><p class="hint">つくりたいことを、仲間とひとつずつ。</p></div><button class="text-button" data-action="logout">ログアウト</button></div><h2>自分の企画</h2><div class="nw-dashboard-cards">${projects.map(p=>`<article class="nw-card">${icon('bulb')}<h3>${esc(p.title)}</h3><span class="nw-tag">初回1企画・無料</span><span class="nw-tag">${p.state==='published'?'募集ページ公開中':p.state==='archived'?'完了':'準備中・非公開'}</span><div class="nw-actions"><a class="button" href="/workspace#project=${p.id}">企画を開く →</a></div></article>`).join('')||'<p class="nw-empty">運営から企画が届くと、ここに表示されます。</p>'}</div><h2>参加している企画</h2><p class="hint">応募内容・メッセージは、ご本人と企画者だけが確認できます。</p>${inbox(apps)}${state.me.operator?'<p class="nw-actions"><a href="/admin/intakes">運営の受付一覧へ</a></p>':''}<p class="nw-actions"><a href="/workspace?legacy=1">以前の企画・契約管理を見る</a></p>`);wireThreads();
   }
   async function render(path) {
-    stop();if(!state.me)return false;
+    stop();operatorContext=null;if(!state.me)return false;
     if(/^\/intakes\/[a-f0-9]{24}$/.test(path)) {const item=await api(path);if(item.projectId){navigate('/workspace#project='+item.projectId);return true;}return false;}
     if(path!=='/workspace')return false;
-    const inspect=new URLSearchParams(location.search).get('inspectIntake');
-    if(inspect){current=await api('/admin/intakes/'+encodeURIComponent(inspect)+'/workspace');draft=structuredClone(current.draft);state.dirty=false;tab='overview';draw();return true;}
+    const query=new URLSearchParams(location.search),inspect=query.get('editIntake')||query.get('inspectIntake');
+    if(inspect){const value=await api('/admin/intakes/'+encodeURIComponent(inspect)+'/workspace');operatorContext={intake:encodeURIComponent(inspect),edit:query.has('editIntake')};adopt(value);state.dirty=false;tab='overview';activeApplication='';thread=null;draw();return true;}
     const id=new URLSearchParams(location.hash.slice(1)).get('project');
     if(id&&(state.me.workspaceProjects||[]).some(p=>p.id===id)){tab=new URLSearchParams(location.hash.slice(1)).get('tab')||'overview';if(!tabs.some(t=>t[0]===tab))tab='overview';await load(id);return true;}
     if(new URLSearchParams(location.search).has('legacy'))return false;
