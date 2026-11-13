@@ -29,6 +29,7 @@ def configuration():
             "billingProvider": "stripe", "publicSandbox": public_sandbox(),
             "phone": os.getenv("NOTTA_SELLER_PHONE", "090-9325-5945"), "price": 3000,
             "intakeMode": intake.enabled(), "workspaceMode": workspace.enabled(), "planningMode": workspace.planning.enabled(),
+            "simpleUiMode": workspace.enabled() and workspace.planning.enabled() and os.getenv("NOTTA_SIMPLE_UI_ENABLED") == "yes",
             "initialProjectPrice": 0, "workspaceAiLimit": workspace.LIMIT,
             "workspaceAiReady": workspace.enabled() and workspace.workspace_ai.interview.ready()}
 

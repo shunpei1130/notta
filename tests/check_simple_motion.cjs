@@ -1,0 +1,20 @@
+'use strict';
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const vm=require('node:vm');
+const source=fs.readFileSync(path.join(__dirname,'../static/simple-workspace.js'),'utf8');
+let reduced=true,queries=0,animations=[];
+const card={dataset:{motionTask:'stable-task'},getBoundingClientRect:()=>({left:20,top:20,width:160,height:140,bottom:160}),animate:(frames,options)=>animations.push({frames,options})};
+const context={window:{},document:{addEventListener(){}},state:{config:{}},matchMedia:()=>({matches:reduced}),innerHeight:844,
+  $$:()=>{queries++;return [card];},Map,Set};
+vm.createContext(context);vm.runInContext(source,context);
+const rects=new Map([['stable-task',{left:10,top:80,width:180,height:140}]]);
+context.window.nottaSimple.animate({},rects);
+assert.equal(queries,0);assert.equal(animations.length,0);
+reduced=false;context.window.nottaSimple.animate({},rects);
+assert.equal(animations.length,1);
+assert.match(animations[0].frames[0].transform,/translate\(-10px,60px\)/);
+assert.equal(animations[0].frames.at(-1).transform,'none');
+assert.ok(animations[0].options.duration+animations[0].options.delay<=300);
+console.log('Passed: reduced motion skips animation; stable task IDs connect card positions within 300ms.');

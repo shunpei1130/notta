@@ -1,7 +1,8 @@
 'use strict';
 window.nottaWorkspace = (() => {
   let current = null, draft = null, tab = 'overview', activeApplication = '', thread = null, lastCursor = 0, timer = null;
-  let pendingSend = null;
+  let pendingSend = null, unreadTimer = null, saving = null, draftRevision = 0;
+  const messageDrafts = new Map();
   let operatorContext = null;
   const tabs = [['overview','企画概要'],['tasks','準備タスク'],['recruit','募集'],['applications','応募・メッセージ'],['artifacts','資料']];
   const icons = {bulb:'<path d="M9 18h6M10 21h4M8 14a6 6 0 1 1 8 0l-1 2H9z"/>',people:'<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v3"/>'};
@@ -9,17 +10,18 @@ window.nottaWorkspace = (() => {
   const taskKeys = [['title','タスク名',120],['instructions','作業内容',3000],['role','お願いしたい役割',120],['estimate','かかる時間の目安',120],['completion','成果物・完了条件',2000]];
   const publicKeys = [['title','公開する企画名',120],['overview','公開する企画の概要',4000],['schedule','日程・開催場所の案内',1500],['conditions','参加条件・権利・参加費など',2000],['recruitment','募集文',3000]];
   const field = (key,label,value,max,multiline=true,attrs='') => `<label>${label}<${multiline ? 'textarea rows="3"' : 'input'} ${attrs} name="${key}" maxlength="${max}" ${multiline ? '' : 'value="' + esc(value) + '"'}>${multiline ? esc(value) + '</textarea>' : ''}</label>`;
-  function stop() { clearInterval(timer); timer = null; }
-  function dirty() { state.dirty = true; const el = $('#nw-save-state'); if (el) el.textContent = '未保存の変更があります'; }
+  function stop() { clearInterval(timer); timer = null; clearInterval(unreadTimer); unreadTimer = null; }
+  function dirty() { draftRevision++; state.dirty = true; const el = $('#nw-save-state'); if (el) el.textContent = '未保存の変更があります'; if(nottaSimple.enabled())nottaSimple.dirty(); }
   function shell(body) { main('<div class="nw">' + body + '</div>'); }
   function projectApi(action) {
     return operatorContext ? '/admin/intakes/'+operatorContext.intake+'/workspace/'+action : '/projects/'+current.id+'/'+action;
   }
-  function adopt(value) {
+  function adopt(value, keepDraft=false) {
     current=value;
     if(operatorContext)current.readOnly=!operatorContext.edit||!current.canEdit;
-    draft=structuredClone(current.draft);
+    if(!keepDraft)draft=structuredClone(current.draft);
     if(state.config.planningMode)nottaPlanning.ensure(draft);
+    nottaSimple.saved();
   }
   async function copyText(value) {
     try { await navigator.clipboard.writeText(value); notice('コピーしました。'); }
@@ -61,6 +63,8 @@ window.nottaWorkspace = (() => {
   }
   function draw() {
     stop();
+    if(nottaSimple.enabled())return drawSimple();
+    nottaSimple.cleanup();
     document.title=draft.title+'｜ノッタ';
     shell(`${header()}<div class="nw-tabs" role="tablist" aria-label="企画の操作">${tabs.map(([id,label])=>`<button role="tab" id="nw-tab-${id}" aria-controls="nw-panel" aria-selected="${tab===id}" tabindex="${tab===id?0:-1}" data-w-tab="${id}">${label}${id==='applications'&&current.applications.length?' '+current.applications.length:''}</button>`).join('')}</div><div class="nw-grid"><section class="nw-main" role="tabpanel" id="nw-panel" aria-labelledby="nw-tab-${tab}">${tab==='overview'?overview():tab==='tasks'?tasks():tab==='recruit'?recruit():tab==='artifacts'?artifacts():inbox(current.applications)}</section>${current.state==='archived'?'':aiBox()}</div>`);
     if(tab==='recruit'&&(current.applications.length||current.protectedTaskIds?.length)) $('.nw-main').insertAdjacentHTML('afterbegin','<p class="banner">応募済みの企画案内と募集条件は固定されています。役割の条件を変える場合は、旧枠の受付を停止して新しいタスクを追加してください。本人用の準備内容は編集できます。</p>');
@@ -85,12 +89,42 @@ window.nottaWorkspace = (() => {
     if(state.config.planningMode)bindPlanning();
     if(tab==='applications'&&activeApplication&&current.applications.some(a=>a.id===activeApplication)) openThread(activeApplication);
   }
-  async function save() {
-    if(!state.dirty||!current)return;
-    adopt(await api(projectApi('edit'),{version:current.version,draft}));state.dirty=false;
-    if($('#nw-save-state'))$('#nw-save-state').textContent='保存済み · 第'+current.version+'版';
+  function drawSimple() {
+    document.title=draft.title+'｜ノッタ';
+    shell(nottaSimple.render({d:draft,c:current,tab,operator:operatorContext,
+      redraw:draw,navigate:next=>{tab=next;draw();},dirty,copyText,previewHtml,overviewFields,artifacts,inbox,aiBox,
+      save:async()=>{await save();draw();$('#ns-dialog [data-simple-save]')?.focus({preventScroll:true});notice(operatorContext?'本人の企画に保存しました。募集の公開内容は変えていません。':'変更を保存しました。公開ページには反映していません。');}
+    }));
+    if(!current.readOnly&&current.state!=='archived')wire();
+    else $('#nw-history')?.addEventListener('click',()=>busy($('#nw-history'),showHistory));
+    bindPlanning();nottaSimple.mount();
+    if(!operatorContext&&tab==='applications'&&activeApplication&&current.applications.some(a=>a.id===activeApplication))openThread(activeApplication).catch(e=>notice(e.message,true));
+    if(!operatorContext&&tab!=='applications') {
+      const pid=current.id;
+      unreadTimer=setInterval(async()=>{
+        if(document.hidden||state.busy||nottaWait.current||current?.id!==pid)return;
+        try {const value=await api('/projects/'+pid);if(current?.id===pid){current.applications=value.applications;nottaSimple.updateUnread(current);}}catch{}
+      },30000);
+    }
   }
-  function openTask(tid){tab='tasks';draw();const box=$(`.nw-task [data-task="${tid}"]`)?.closest('details');if(box){box.open=true;$('summary',box).focus();box.scrollIntoView({block:'center'});}}
+  async function save() {
+    if(saving)await saving;
+    if(!state.dirty||!current)return;
+    saving=(async()=>{
+      do {
+        const revision=draftRevision,pid=current.id,payload=structuredClone(draft);
+        let result;
+        try {result=await api(projectApi('edit'),{version:current.version,draft:payload});}
+        catch(error){if(error.status===409&&nottaSimple.enabled())nottaSimple.conflict();throw error;}
+        if(current?.id!==pid)return;
+        const changed=draftRevision!==revision;
+        adopt(result,changed);state.dirty=changed;
+      } while(state.dirty);
+      if($('#nw-save-state'))$('#nw-save-state').textContent='保存済み · 第'+current.version+'版';
+    })();
+    try {await saving;}finally{saving=null;}
+  }
+  function openTask(tid){if(nottaSimple.enabled())return nottaSimple.openTask(tid);tab='tasks';draw();const box=$(`.nw-task [data-task="${tid}"]`)?.closest('details');if(box){box.open=true;$('summary',box).focus();box.scrollIntoView({block:'center'});}}
   function bindPlanning(){
     $('.nw').classList.toggle('planning-home',tab==='overview');
     $('.nw').classList.toggle('planning-operator',!!operatorContext);
@@ -114,7 +148,7 @@ window.nottaWorkspace = (() => {
       dirty();
     }));
     $('#nw-overview')?.addEventListener('submit',e=>e.preventDefault());
-    $$('[data-recruit]').forEach(el=>el.addEventListener('change',()=>{draft.tasks.find(t=>t.id===el.dataset.recruit).recruit=el.checked;dirty();draw();}));
+    $$('[data-recruit]').forEach(el=>el.addEventListener('change',()=>{draft.tasks.find(t=>t.id===el.dataset.recruit).recruit=el.checked;dirty();if(nottaSimple.enabled())nottaSimple.capture();draw();if(nottaSimple.enabled())$(`[data-recruit="${el.dataset.recruit}"]`)?.focus({preventScroll:true});}));
     $$('[data-capacity]').forEach(el=>el.addEventListener('input',()=>{const t=draft.tasks.find(t=>t.id===el.dataset.capacity);t.capacity=Number(el.value);t.termsConfirmed=false;const cb=$(`[data-terms="${t.id}"]`);if(cb)cb.checked=false;dirty();}));
     $$('[data-terms]').forEach(el=>el.addEventListener('change',()=>{draft.tasks.find(t=>t.id===el.dataset.terms).termsConfirmed=el.checked;dirty();}));
     $('#nw-add-task')?.addEventListener('click',()=>{const id=crypto.randomUUID().replaceAll('-','').slice(0,24);const stageId=state.config.planningMode&&draft.roadmap?$('#nw-new-task-stage')?.value||'':'';if(state.config.planningMode&&draft.roadmap&&!stageId){notice('追加する段階を選んでください。',true);$('#nw-new-task-stage')?.focus();return;}draft.tasks.push({id,stageId,dependsOn:[],title:'新しいタスク',instructions:'',role:'',estimate:'',completion:'',status:'未着手',recruit:false,capacity:1,offer:{title:'新しいタスク',instructions:'',role:'',estimate:'',completion:'',terms:''},termsConfirmed:false});dirty();draw();});
@@ -124,7 +158,7 @@ window.nottaWorkspace = (() => {
       const prompt=f.elements.prompt.value.trim();await save();state.busy=true;
       try{const key='notta-workspace-ai-'+current.id;let ticket;try{ticket=JSON.parse(sessionStorage.getItem(key)||'null');}catch{}
         if(!ticket||ticket.prompt!==prompt||ticket.version!==current.version)ticket={requestId:crypto.randomUUID(),prompt,version:current.version,applicationId:tab==='applications'?activeApplication:''};
-        sessionStorage.setItem(key,JSON.stringify(ticket));const result=await api('/projects/'+current.id+'/assist',ticket);sessionStorage.removeItem(key);await load(current.id);notice(result.reply,!result.applied);
+        sessionStorage.setItem(key,JSON.stringify(ticket));const result=await api('/projects/'+current.id+'/assist',ticket);sessionStorage.removeItem(key);nottaSimple.clearPrompt();await load(current.id);notice(result.reply,!result.applied);
       }finally{state.busy=false;}
     },$('.nw-error',f),'AIが企画を整えています');});
     $('#nw-preview')?.addEventListener('click',()=>busy($('#nw-preview'),async()=>{await save();showPreview();}));
@@ -137,18 +171,21 @@ window.nottaWorkspace = (() => {
     wireThreads();
   }
   function previewHtml(p,roles,applyButtons=false) {
-    return `<h2>${esc(p.title)}</h2><h3>企画の概要</h3><p>${esc(p.overview)}</p><h3>日程・場所</h3><p>${esc(p.schedule)}</p><h3>参加条件</h3><p>${esc(p.conditions)}</p><h3>募集について</h3><p>${esc(p.recruitment)}</p><h3>一緒につくる役割</h3><div class="nw-offers">${roles.map(r=>`<article class="nw-card nw-offer"><h3>${esc(r.title)}</h3><span class="nw-tag">${esc(r.role)} · ${r.capacity}名${r.closed?' · 受付終了':''}</span><p>${esc(r.instructions)}</p><dl><dt>時間の目安</dt><dd>${esc(r.estimate)}</dd><dt>成果物・完了条件</dt><dd>${esc(r.completion)}</dd><dt>参加条件</dt><dd>${esc(r.terms)}</dd></dl>${applyButtons?`<button class="button secondary" data-w-apply="${r.id}" ${r.closed?'disabled':''}>${r.closed?'受付終了':'この役割に応募する →'}</button>`:''}</article>`).join('')}</div>`;
+    return `<h2>${esc(p.title)}</h2><h3>企画の概要</h3><p>${esc(p.overview)}</p><h3>日程・場所</h3><p>${esc(p.schedule)}</p><h3>参加条件</h3><p>${esc(p.conditions)}</p><h3>募集について</h3><p>${esc(p.recruitment)}</p><h3>一緒につくる役割</h3><div class="nw-offers">${roles.map(r=>`<article class="nw-card nw-offer" data-motion-task="${r.id}"><h3>${esc(r.title)}</h3><span class="nw-tag">${esc(r.role)} · ${r.capacity}名${r.closed?' · 受付終了':''}</span><p>${esc(r.instructions)}</p><dl><dt>時間の目安</dt><dd>${esc(r.estimate)}</dd><dt>成果物・完了条件</dt><dd>${esc(r.completion)}</dd><dt>参加条件</dt><dd>${esc(r.terms)}</dd></dl>${applyButtons?`<button class="button secondary" data-w-apply="${r.id}" ${r.closed?'disabled':''}>${r.closed?'受付終了':'この役割に応募する →'}</button>`:''}</article>`).join('')}</div>`;
   }
   function showPreview() {
-    if(state.config.planningMode&&!nottaPlanning.recruitment(draft).ready){draw();notice('確認する項目を入力してからプレビューしてください。',true);$('#rp-recruit-missing')?.scrollIntoView({block:'center'});return;}
+    if(state.config.planningMode&&!nottaPlanning.recruitment(draft).ready){draw();notice('確認する項目を入力してからプレビューしてください。',true);const missing=$('#rp-recruit-missing');if(missing?.tagName==='DETAILS')missing.open=true;missing?.scrollIntoView({block:'center'});return;}
     const roles=draft.tasks.filter(t=>t.recruit).map(t=>({...t.offer,terms:t.useCommonTerms?draft.public.conditions:t.offer.terms,id:t.id,capacity:t.capacity}));
-    if(operatorContext){const dialog=$('#confirm-dialog');$('#confirm-content').innerHTML=`<div class="nw-preview"><h2 id="confirm-title">募集の下書きを確認</h2><p class="hint">公開は本人が内容を確認して行います。現在公開されている内容は変更していません。</p>${previewHtml(draft.public,roles)}</div>`;dialog.showModal();return;}
-    const dialog=$('#confirm-dialog');$('#confirm-content').innerHTML=`<div class="nw-preview"><h2 id="confirm-title">公開前の確認</h2><p class="hint">以下の内容が誰でも見られる募集ページに表示されます。ヒアリングの原文や本人用の資料は公開しません。</p>${previewHtml(draft.public,roles)}<form id="nw-publish-form"><label class="check-label"><input type="checkbox" required><span>企画・募集する役割・人数・参加条件を確認し、この内容を公開します。</span></label><p class="nw-error" role="alert"></p><button class="button" type="submit">公開してURLを発行</button></form></div>`;dialog.showModal();
+    const preview=nottaSimple.enabled()?nottaSimple.preview(draft.public,roles):previewHtml(draft.public,roles);
+    if(nottaSimple.enabled())nottaSimple.capture();
+    if(operatorContext){const dialog=$('#confirm-dialog');$('#confirm-content').innerHTML=`<div class="nw-preview"><h2 id="confirm-title">募集の下書きを確認</h2><p class="hint">公開は本人が内容を確認して行います。現在公開されている内容は変更していません。</p>${preview}</div>`;dialog.showModal();if(nottaSimple.enabled())nottaSimple.animate(dialog);return;}
+    const dialog=$('#confirm-dialog');$('#confirm-content').innerHTML=`<div class="nw-preview"><h2 id="confirm-title">公開前の確認</h2><p class="hint">以下の内容が誰でも見られる募集ページに表示されます。ヒアリングの原文や本人用の資料は公開しません。</p>${preview}<form id="nw-publish-form"><label class="check-label"><input type="checkbox" required><span>企画・募集する役割・人数・参加条件を確認し、この内容を公開します。</span></label><p class="nw-error" role="alert"></p><button class="button" type="submit">公開してURLを発行</button></form></div>`;dialog.showModal();
+    if(nottaSimple.enabled())nottaSimple.animate(dialog);
     $('#nw-publish-form').addEventListener('submit',e=>{e.preventDefault();const f=e.currentTarget;busy($('button',f),async()=>{current=await api('/projects/'+current.id+'/publish',{version:current.version,consent:true,confirmRoles:state.config.planningMode===true});draft=structuredClone(current.draft);dialog.close();draw();$('#nw-copy-url')?.focus();notice('募集ページを公開しました。URLをコピーして共有できます。');},$('.nw-error',f));});
   }
   async function showHistory() {
     const result=await api(projectApi('history'));const dialog=$('#confirm-dialog');
-    $('#confirm-content').innerHTML=`<h2 id="confirm-title">編集履歴</h2><p class="hint">復元しても公開ページは変わりません。応募のあるタスクを消す復元はできません。</p>${result.items.map(h=>`<div class="nw-actions"><span>第${h.version}版 · ${esc(h.reason)} · ${date(h.created)}</span><button class="button secondary compact" data-restore="${h.version}">この版に戻す</button></div>`).join('')}<p class="nw-error" role="alert"></p>`;dialog.showModal();
+    $('#confirm-content').innerHTML=`<h2 id="confirm-title">編集履歴</h2><p class="hint">復元しても公開ページは変わりません。応募のあるタスクを消す復元はできません。</p>${result.items.map(h=>`<div class="nw-actions"><span>第${h.version}版 · ${esc(h.reason)} · ${date(h.created)}</span>${!current.readOnly&&current.state!=='archived'?`<button class="button secondary compact" data-restore="${h.version}">この版に戻す</button>`:''}</div>`).join('')}<p class="nw-error" role="alert"></p>`;dialog.showModal();
     $$('[data-restore]',dialog).forEach(b=>b.addEventListener('click',()=>busy(b,async()=>{await save();adopt(await api(projectApi('restore'),{version:current.version,restoreVersion:Number(b.dataset.restore)}));state.dirty=false;dialog.close();draw();notice('履歴から復元しました。');},$('.nw-error',dialog))));
   }
   function wireThreads() {$$('[data-thread]').forEach(b=>b.addEventListener('click',()=>busy(b,async()=>{activeApplication=b.dataset.thread;await openThread(activeApplication);$$('[data-thread]').forEach(x=>x.setAttribute('aria-current',String(x.dataset.thread===activeApplication)));})));}
@@ -164,14 +201,17 @@ window.nottaWorkspace = (() => {
     else if(thread.owner&&thread.canSend&&thread.status==='提出')assignment.innerHTML='<label>成果へのコメント<textarea id="nw-feedback" maxlength="1000"></textarea></label><button class="button compact" data-app-status="確認済">成果を確認して貢献を記録</button> <button class="text-button" data-app-status="差戻し">修正をお願いする</button>';
     else if(!thread.owner&&thread.canSend&&['担当','差戻し'].includes(thread.status))assignment.innerHTML='<label>成果を提出（文章・URL）<textarea id="nw-submission" maxlength="4000"></textarea></label><button class="button compact" id="nw-submit-output">企画者に提出</button>';
     else assignment.textContent='現在の状態：'+thread.status;
-    $$('[data-app-status]').forEach(b=>b.addEventListener('click',()=>busy(b,async()=>{await api('/applications/'+aid+'/status',{version:thread.version,status:b.dataset.appStatus,comment:$('#nw-feedback')?.value||''});if(current){await load(current.id,'applications');}else{await openThread(aid);}notice('応募の状態を更新しました。');})));
+    $$('[data-app-status]').forEach(b=>b.addEventListener('click',()=>busy(b,async()=>{if(current)await save();await api('/applications/'+aid+'/status',{version:thread.version,status:b.dataset.appStatus,comment:$('#nw-feedback')?.value||''});if(current){await load(current.id,'applications');}else{await openThread(aid);}notice('応募の状態を更新しました。');})));
     $('#nw-submit-output')?.addEventListener('click',()=>busy($('#nw-submit-output'),async()=>{await api('/applications/'+aid+'/submit',{version:thread.version,body:$('#nw-submission').value});await openThread(aid);notice('成果を提出しました。');}));
-    $('#nw-reply-draft')?.addEventListener('click',()=>{const prompt=$('#nw-prompt');if(prompt){$('.nw-ai-details').open=true;prompt.value='選択した応募者のメッセージへの返信案を、資料として作成して。';prompt.focus();}});
-    $('#nw-message-form').addEventListener('submit',e=>{e.preventDefault();const form=e.currentTarget;busy($('button[type=submit]',form),async()=>{const body=form.elements.body.value.trim();if(!pendingSend||pendingSend.body!==body||pendingSend.aid!==aid)pendingSend={body,aid,requestId:crypto.randomUUID()};await api('/applications/'+aid+'/messages',{body,requestId:pendingSend.requestId});pendingSend=null;form.elements.body.value='';await poll();},$('.nw-error',form));});
+    $('#nw-reply-draft')?.addEventListener('click',()=>{const value='選択した応募者のメッセージへの返信案を、資料として作成して。';if(nottaSimple.enabled())return nottaSimple.openAI(value);const prompt=$('#nw-prompt');if(prompt){$('.nw-ai-details').open=true;prompt.value=value;prompt.focus();}});
+    const messageKey=state.me.user.id+':'+aid;
+    $('#nw-message').value=messageDrafts.get(messageKey)||'';
+    $('#nw-message').addEventListener('input',e=>messageDrafts.set(messageKey,e.target.value));
+    $('#nw-message-form').addEventListener('submit',e=>{e.preventDefault();const form=e.currentTarget;busy($('button[type=submit]',form),async()=>{const body=form.elements.body.value.trim();if(!pendingSend||pendingSend.body!==body||pendingSend.aid!==aid)pendingSend={body,aid,requestId:crypto.randomUUID()};await api('/applications/'+aid+'/messages',{body,requestId:pendingSend.requestId});pendingSend=null;messageDrafts.delete(messageKey);form.elements.body.value='';await poll();},$('.nw-error',form));});
     await acknowledge();const box=$('#nw-messages');if(box)box.scrollTop=box.scrollHeight;
     timer=setInterval(()=>{if(!document.hidden&&!state.busy&&!nottaWait.current&&$('#nw-thread')?.isConnected)poll().catch(()=>{});},10000);
   }
-  async function acknowledge() {if(lastCursor&&!document.hidden)await api('/applications/'+activeApplication+'/read',{cursor:lastCursor});}
+  async function acknowledge() {if(lastCursor&&!document.hidden){await api('/applications/'+activeApplication+'/read',{cursor:lastCursor});const application=current?.applications.find(a=>a.id===activeApplication);if(application)application.unread=0;if(current&&nottaSimple.enabled())nottaSimple.updateUnread(current);}}
   async function poll() {
     const aid=activeApplication;const data=await api('/applications/'+aid+'/messages?after='+lastCursor);if(activeApplication!==aid||!$('#nw-messages'))return;
     if(data.messages.length){$('#nw-messages').insertAdjacentHTML('beforeend',bubbles(data.messages));lastCursor=data.messages.at(-1).cursor;$('#nw-messages').scrollTop=$('#nw-messages').scrollHeight;await acknowledge();}
@@ -181,7 +221,7 @@ window.nottaWorkspace = (() => {
     shell(`<div class="nw-top"><div><p class="eyebrow">YOUR PROJECTS</p><h1>${esc(state.me.user.name)}さんのマイページ</h1><p class="hint">つくりたいことを、仲間とひとつずつ。</p></div><button class="text-button" data-action="logout">ログアウト</button></div><h2>自分の企画</h2><div class="nw-dashboard-cards">${projects.map(p=>`<article class="nw-card">${icon('bulb')}<h3>${esc(p.title)}</h3><span class="nw-tag">初回1企画・無料</span><span class="nw-tag">${p.state==='published'?'募集ページ公開中':p.state==='archived'?'完了':'準備中・非公開'}</span><div class="nw-actions"><a class="button" href="/workspace#project=${p.id}">企画を開く →</a></div></article>`).join('')||'<p class="nw-empty">運営から企画が届くと、ここに表示されます。</p>'}</div><h2>参加している企画</h2><p class="hint">応募内容・メッセージは、ご本人と企画者だけが確認できます。</p>${inbox(apps)}${state.me.operator?'<p class="nw-actions"><a href="/admin/intakes">運営の受付一覧へ</a></p>':''}<p class="nw-actions"><a href="/workspace?legacy=1">以前の企画・契約管理を見る</a></p>`);wireThreads();
   }
   async function render(path) {
-    stop();operatorContext=null;if(!state.me)return false;
+    stop();nottaSimple.cleanup();operatorContext=null;if(!state.me)return false;
     if(/^\/intakes\/[a-f0-9]{24}$/.test(path)) {const item=await api(path);if(item.projectId){navigate('/workspace#project='+item.projectId);return true;}return false;}
     if(path!=='/workspace')return false;
     const query=new URLSearchParams(location.search),inspect=query.get('editIntake')||query.get('inspectIntake');
@@ -194,7 +234,7 @@ window.nottaWorkspace = (() => {
     return false;
   }
   function publicPage(p) {
-    stop();document.body.classList.add('workspace-theme');document.title=p.title+'｜ノッタの募集';state.public=p;
+    stop();nottaSimple.cleanup();document.body.classList.add('workspace-theme');document.title=p.title+'｜ノッタの募集';state.public=p;
     shell(`<article class="nw-preview"><p class="eyebrow">LET'S CREATE TOGETHER</p><span class="nw-tag">ノッタでの協力応募は無料</span><p class="hint">企画者：${esc(p.creator)}</p>${previewHtml(p,p.roles,true)}<p class="hint">参加費や実費、謝礼などは各役割の条件をご確認ください。ノッタは集客・企画の実現を保証しません。</p></article>`);
     $$('[data-w-apply]').forEach(b=>b.addEventListener('click',()=>{const open=()=>applyForm(p,b.dataset.wApply);if(!state.me)return auth(open);open();}));
   }

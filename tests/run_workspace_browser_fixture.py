@@ -3,6 +3,7 @@ import json
 import os
 import secrets
 import sys
+import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +23,8 @@ os.environ.update(NOTTA_SERVICE_ENABLED="yes", NOTTA_INTAKE_ENABLED="yes", NOTTA
                   NOTTA_AI_ENABLED="yes", OPENAI_API_KEY="fixture-not-a-key")
 if os.getenv('NOTTA_BROWSER_PLANNING') == 'yes':
     os.environ['NOTTA_PLANNING_ENABLED'] = 'yes'
+if os.getenv('NOTTA_BROWSER_SIMPLE') == 'yes':
+    os.environ['NOTTA_SIMPLE_UI_ENABLED'] = 'yes'
 providers.mail_ready = lambda: True
 providers.interview_ready = lambda: False
 providers.search_ready = lambda: False
@@ -64,8 +67,31 @@ with s.connect() as c:
             task.update(id=s.ident(), stageId=stages[0 if i in (0,1,2,4) else 2 if i>=11 else 1]['id'], dependsOn=[], useCommonTerms=True, recruit=i in (1,5,7,8), recruitCandidate=i in (1,5,7,8), offer={**task, 'terms': ''})
         dependencies = [[],[0],[1],[0],[0],[0,1,4],[5],[2],[1,2],[6,7,8],[3,6,7,8],[9,10],[11],[12]]
         for task, before in zip(result['tasks'], dependencies): task['dependsOn'] = [result['tasks'][index]['id'] for index in before]
+    if os.getenv('NOTTA_BROWSER_LARGE') == 'yes' and work.planning.enabled():
+        for name in ('当日を迎える', '開催する', '片付けとお礼'):
+            result['roadmap']['stages'].append({'id': s.ident(), 'title': name, 'outcome': name+'の作業を終え、次の準備に進める'})
+        while len(result['tasks']) < 50:
+            index = len(result['tasks'])
+            result['tasks'].append({'id': s.ident(), 'title': '長い名前でも内容が読めることを確認する架空の準備タスク '+str(index+1),
+                                    'instructions': '【検証用】作業内容を確認し、必要な準備を進める。', 'role': '準備担当', 'estimate': '30分', 'completion': '準備内容を記録して本人が確認する',
+                                    'stageId': result['roadmap']['stages'][index % 6]['id'], 'dependsOn': [], 'recruitCandidate': False, 'recruit': False, 'useCommonTerms': True})
     pid = work.deliver(c, operator, item["id"], {"result": result, "draftVersion": 0, "recruitTaskIndexes": [1, 5, 7, 8]})["projectId"]
+    if os.getenv('NOTTA_BROWSER_LARGE') == 'yes':
+        value = work.detail(c, owner, pid)
+        value['draft']['tasks'][-1]['stageId'] = ''
+        work.edit(c, owner, pid, {'version': value['version'], 'draft': value['draft']})
+    if os.getenv('NOTTA_BROWSER_COMPLETE') == 'yes':
+        value = work.detail(c, owner, pid)
+        for task in value['draft']['tasks']:
+            task['status'] = '完了'
+        work.edit(c, owner, pid, {'version': value['version'], 'draft': value['draft']})
     (DATA / "fixture.json").write_text(json.dumps({"project": pid, "intake": item["id"]}), encoding="utf-8")
+if os.getenv('NOTTA_BROWSER_SLOW_EDIT') == 'yes':
+    original_edit = work.edit
+    def slow_edit(*args, **kwargs):
+        time.sleep(0.8)
+        return original_edit(*args, **kwargs)
+    work.edit = slow_edit
 httpd = ThreadingHTTPServer(("127.0.0.1", 8892), s.Handler)
 print("Workspace fixture ready at http://127.0.0.1:8892; all accounts fictional; all providers local.", flush=True)
 httpd.serve_forever()
