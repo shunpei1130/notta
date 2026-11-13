@@ -100,3 +100,14 @@ body.simple-workspace #confirm-dialog:has(.ns-review-cards) .dialog-close{width:
 @media(prefers-reduced-motion:reduce){.ns-workspace *,.ns-dialog,.ns-dialog *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 @media(max-width:650px){.nw .ns-title h1{-webkit-line-clamp:1;font-size:16px}.ns-task-card>strong{font-size:14px}.ns-stage-rail button{min-height:84px}.ns-ai-button{padding:6px 9px;min-height:32px;font-size:10px}.ns-ai-button svg{width:16px;height:16px}}
+/* Keep the task cards near the top on phones. Full text remains in the DOM. */
+@media(max-width:650px){
+ body.simple-workspace .site-header{padding-block:6px;min-height:42px}
+ .ns-head{gap:8px;align-items:center}.ns-back{font-size:10px}.nw .ns-title h1{font-size:14px;line-height:1.4;margin:2px 0}.ns-public-state{font-size:10px}
+ .ns-savebar{margin:3px 0;min-height:30px}.ns-savebar .button{min-height:30px;padding:4px 9px}.ns-message-button{min-height:38px;padding:4px 7px}.ns-menu>summary{min-height:38px;padding:11px 7px}
+ .ns-nav{margin:4px 0 10px;padding:3px}.ns-nav button{min-height:36px;font-size:13px}
+ .ns-stage-rail{gap:6px;padding-bottom:5px}.ns-stage-rail button{min-height:66px;min-width:120px;max-width:145px;padding:7px 10px;gap:2px}.ns-stage-rail strong{font-size:11px;line-height:1.4}.ns-stage-rail small,.ns-stage-rail span{font-size:9px}
+ .ns-stage-pager{margin-bottom:5px}.ns-stage-pager button{min-height:28px;padding:4px 2px;font-size:11px}
+ .ns-stage-outcome{padding:9px 12px;margin-bottom:10px;border-radius:12px}.ns-stage-outcome .ns-eyebrow{font-size:9px;margin-bottom:2px}.ns-stage-outcome h2{font-size:12px;line-height:1.55;margin-bottom:3px}.ns-stage-outcome .ns-section-title{font-size:10px}.ns-stage-outcome .text-button{min-height:26px;font-size:10px}
+ .ns-task-card{min-height:132px;padding:11px;gap:9px}
+}
