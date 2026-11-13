@@ -1,6 +1,12 @@
 """Additive schema for the public Notta service. No production startup DDL."""
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS svc_passwords(user_id TEXT PRIMARY KEY REFERENCES users(id),password_hash TEXT NOT NULL,updated INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS svc_password_mail(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),campaign TEXT NOT NULL,status TEXT NOT NULL,provider_id TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL,updated INTEGER NOT NULL,UNIQUE(user_id,campaign));
+CREATE TABLE IF NOT EXISTS svc_password_tokens(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),purpose TEXT NOT NULL,expires INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL,mail_id TEXT NOT NULL REFERENCES svc_password_mail(id));
+CREATE TABLE IF NOT EXISTS svc_auth_attempts(id TEXT PRIMARY KEY,kind TEXT NOT NULL,email_hash TEXT NOT NULL,ip_hash TEXT NOT NULL,created INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS svc_auth_attempt_email ON svc_auth_attempts(kind,email_hash,created);
+CREATE INDEX IF NOT EXISTS svc_auth_attempt_ip ON svc_auth_attempts(kind,ip_hash,created);
 CREATE TABLE IF NOT EXISTS svc_accounts(user_id TEXT PRIMARY KEY REFERENCES users(id), verified_at INTEGER NOT NULL, trial_allocated INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS svc_auth(id TEXT PRIMARY KEY,email TEXT NOT NULL,name TEXT NOT NULL,ip_hash TEXT NOT NULL,code_hash TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,expires INTEGER NOT NULL,created INTEGER NOT NULL,used INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS svc_auth_email ON svc_auth(email,created);

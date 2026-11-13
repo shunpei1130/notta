@@ -95,6 +95,7 @@ class Handler(BaseHTTPRequestHandler):
  def log_message(self,*args):pass # no credentials or personal text in logs
  def respond(self,status,data,cookie=None):
   raw=json.dumps(data,ensure_ascii=False).encode();self.send_response(status);self.headers_common('application/json; charset=utf-8')
+  if not cookie:cookie=getattr(self,'renew_service_cookie',None)
   if cookie:self.send_header('Set-Cookie',cookie)
   self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
  def headers_common(self,mime):
@@ -104,7 +105,12 @@ class Handler(BaseHTTPRequestHandler):
  def session(self,c):
   cookies=dict(x.strip().split('=',1) for x in self.headers.get('Cookie','').split(';') if '=' in x);token=cookies.get('notta_session','')
   s=c.execute('SELECT u.*,s.csrf,s.expires FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token=? AND s.expires>?',(hashlib.sha256(token.encode()).hexdigest(),stamp())).fetchone()
-  require(s,401,'ログインしてください。');return dict(s)
+  require(s,401,'ログインしてください。')
+  if os.getenv('NOTTA_SERVICE_ENABLED')=='yes':
+   import password_auth
+   c.execute('UPDATE sessions SET expires=? WHERE token=?',(password_auth.PERSISTENT,hashlib.sha256(token.encode()).hexdigest()));c.commit()
+   self.renew_service_cookie=password_auth.cookie(token)
+  return dict(s)
  def input(self):
   require(self.headers.get('Content-Type','').split(';')[0]=='application/json',415,'JSON形式が必要です。')
   try:n=int(self.headers.get('Content-Length','0'))
@@ -131,7 +137,7 @@ class Handler(BaseHTTPRequestHandler):
     files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/loop.js':'loop.js','/connections.js':'connections.js','/proposal-review.js':'proposal-review.js','/opencode.js':'opencode.js','/motion.js':'motion.js'}
     if service_mode:
      files={'/service.js':'service.js','/service.css':'service.css','/intake.js':'intake.js','/wait.js':'wait.js','/wait.css':'wait.css','/workspace.js':'workspace.js','/planning.js':'planning.js','/workspace.css':'workspace.css','/simple-workspace.js':'simple-workspace.js','/simple-workspace.css':'simple-workspace.css'}
-     if path in ['/','/workspace','/billing/return','/terms','/privacy','/legal','/admin/intakes'] or re.fullmatch(r'/(?:p/[A-Za-z0-9_-]{16}|(?:admin/)?intakes/[a-f0-9]{24})',path):files[path]='service.html'
+     if path in ['/','/password','/workspace','/billing/return','/terms','/privacy','/legal','/admin/intakes'] or re.fullmatch(r'/(?:p/[A-Za-z0-9_-]{16}|(?:admin/)?intakes/[a-f0-9]{24})',path):files[path]='service.html'
     if path in files:p=HERE/'static'/files[path]
     else:
      # 同梱アセット（書体・3Dアイコン・Lottieプレイヤ・落款JSON）だけを配信する

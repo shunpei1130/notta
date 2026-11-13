@@ -109,14 +109,14 @@ class ServiceTest(unittest.TestCase):
             start = core.auth_start(self.c,{'email':'new@example.test','name':'新しい人','consent':True},'local')
         code = send.call_args.args[1]
         self.assertNotIn(code,json.dumps(start))
-        for _ in range(5): self.problem(403,lambda:core.auth_verify(self.c,{'challenge':start['challenge'],'code':'000000' if code != '000000' else '000001'}))
-        self.problem(403,lambda:core.auth_verify(self.c,{'challenge':start['challenge'],'code':code}))
+        for _ in range(5): self.problem(403,lambda:core.auth_verify(self.c,{'password':'test password long enough','challenge':start['challenge'],'code':'000000' if code != '000000' else '000001'}))
+        self.problem(403,lambda:core.auth_verify(self.c,{'password':'test password long enough','challenge':start['challenge'],'code':code}))
         self.clock.return_value += 61
         with patch.object(providers,'mail_ready',return_value=True), patch.object(providers,'send_code') as send:
             start = core.auth_start(self.c,{'email':'new@example.test','name':'新しい人','consent':True},'local')
-        result,token = core.auth_verify(self.c,{'challenge':start['challenge'],'code':send.call_args.args[1]})
+        result,token = core.auth_verify(self.c,{'password':'test password long enough','challenge':start['challenge'],'code':send.call_args.args[1]})
         self.assertEqual(result['user']['email'],'new@example.test'); self.assertTrue(token)
-        self.problem(403,lambda:core.auth_verify(self.c,{'challenge':start['challenge'],'code':send.call_args.args[1]}))
+        self.problem(403,lambda:core.auth_verify(self.c,{'password':'test password long enough','challenge':start['challenge'],'code':send.call_args.args[1]}))
 
     def test_only_owner_sees_private_draft_and_free_cannot_publish(self):
         pid = self.project(); self.fill(pid)

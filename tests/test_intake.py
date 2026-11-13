@@ -270,7 +270,7 @@ class IntakeTest(unittest.TestCase):
     def test_otp_login_then_goal_and_resume_same_account(self):
         with patch.object(providers, "mail_ready", return_value=True), patch.object(providers, "send_code") as send:
             challenge = core.auth_start(self.c, {"email": "creator@example.test", "name": "企画者", "consent": True}, "local")
-        session, _ = core.auth_verify(self.c, {"challenge": challenge["challenge"], "code": send.call_args.args[1]})
+        session, _ = core.auth_verify(self.c, {"password":"test password long enough","challenge": challenge["challenge"], "code": send.call_args.args[1]})
         uid = session["user"]["id"]
         item = intake.start(self.c, uid, {"goal": "ファンとライブをしたい"})
         self.assertEqual(item["goal"], "ファンとライブをしたい")

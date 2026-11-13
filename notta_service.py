@@ -7,6 +7,7 @@ import re
 
 import server as s
 import service_core as core
+import password_auth as passwords
 import service_stripe as billing
 import service_providers as providers
 import service_intake as intake
@@ -39,7 +40,7 @@ def dashboard(c, user):
     projects = [dict(r) for r in c.execute("SELECT p.id,p.title,v.state,v.slug,v.updated,v.version FROM projects p JOIN svc_projects v ON v.project=p.id WHERE p.owner=? ORDER BY v.updated DESC", (uid,))]
     # Fans see only their own application and its selected role; never other applicants.
     applications = [dict(r) for r in c.execute("SELECT a.id,a.project,a.status,a.version,a.experience,a.submission,a.feedback,a.confirmation,a.confirmed_at,t.title AS role,p.title,u.name AS creator,v.state FROM applications a JOIN tasks t ON t.id=a.task JOIN projects p ON p.id=a.project JOIN users u ON u.id=p.owner JOIN svc_projects v ON v.project=p.id WHERE a.fan=? ORDER BY a.rowid DESC", (uid,))]
-    result = {"user": {key: user[key] for key in ("id", "name", "email")}, "csrf": user["csrf"], "projects": projects, "applications": applications, "billing": billing.summary(c, uid), "quota": core.quota(c, uid)}
+    result = {"user": {key: user[key] for key in ("id", "name", "email")}, "csrf": user["csrf"], "projects": projects, "applications": applications, "billing": billing.summary(c, uid), "quota": core.quota(c, uid), "passwordSet": bool(c.execute('SELECT 1 FROM svc_passwords WHERE user_id=?', (uid,)).fetchone())}
     if intake.enabled():
         result.update(intake=intake.summary(c, uid), operator=intake.is_operator(c, uid))
         result["legacyProjects"] = [dict(r) for r in c.execute("SELECT p.id,p.title,p.goal,p.created FROM projects p WHERE p.owner=? AND NOT EXISTS(SELECT 1 FROM svc_projects v WHERE v.project=p.id) ORDER BY p.rowid DESC", (uid,))]
@@ -83,7 +84,17 @@ def dispatch(handler, method, path):
                 return
             if method == "POST" and path == "/api/service/auth/verify":
                 result, token = core.auth_verify(c, data)
-                handler.respond(200, result, "notta_session=" + token + "; HttpOnly; SameSite=Lax; Path=/; Max-Age=28800")
+                handler.respond(200, result, passwords.cookie(token))
+                return
+            if method == 'POST' and path == '/api/service/auth/login':
+                result, token = passwords.login(c, data, handler.client_address[0])
+                handler.respond(200, result, passwords.cookie(token))
+                return
+            if method == 'POST' and path == '/api/service/auth/password/request':
+                handler.respond(200, passwords.request_link(c, data, handler.client_address[0]))
+                return
+            if method == 'POST' and path == '/api/service/auth/password/complete':
+                handler.respond(200, passwords.complete(c, data, handler.client_address[0]))
                 return
             user = handler.session(c)
             s.require(c.execute("SELECT 1 FROM svc_accounts WHERE user_id=?", (user["id"],)).fetchone(), 401, "メール認証でログインしてください。")
@@ -96,6 +107,10 @@ def dispatch(handler, method, path):
                     paused_draft = json.loads(paused_row[0])
                     s.require(not ("public" in paused_draft and "tasks" in paused_draft), 503, "共同作業の画面はメンテナンス中です。保存した内容は保持されています。")
             if method == "GET":
+                if path == '/api/service/admin/password-invitations':
+                    intake.require_operator(c, user['id'])
+                    handler.respond(200, passwords.invitation_summary(c))
+                    return
                 if intake.enabled():
                     item = re.fullmatch(r"/api/service/intakes/([a-f0-9]{24})", path)
                     admin_item = re.fullmatch(r"/api/service/admin/intakes/([a-f0-9]{24})", path)
@@ -149,6 +164,10 @@ def dispatch(handler, method, path):
                 raise s.Problem(404, "ページがありません。")
             s.require(hmac.compare_digest(handler.headers.get("X-CSRF-Token", ""), user["csrf"]), 403, "操作確認が切れました。再ログインしてください。")
             uid = user["id"]
+            if path == '/api/service/admin/password-invitations':
+                intake.require_operator(c, uid)
+                handler.respond(200, passwords.invite_next(c, uid))
+                return
             if workspace.enabled():
                 operator_action = re.fullmatch(r"/api/service/admin/intakes/([a-f0-9]{24})/workspace/(edit|restore)", path)
                 if operator_action:

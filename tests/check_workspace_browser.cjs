@@ -9,11 +9,11 @@ const base='http://127.0.0.1:8892';
  const errors=[]; const record=[];
  async function context(){const c=await browser.newContext({viewport:{width:1440,height:1000}});const p=await c.newPage();p.on('pageerror',e=>errors.push(e.message));return {c,p};}
  async function login(p,email,name){
-  await p.goto(base);await p.locator('#account-button').click();
+  await p.goto(base);await p.locator('#account-button').click();await p.getByRole('button',{name:'新規登録',exact:true}).click();
   await p.locator('#auth-form [name=email]').fill(email);await p.locator('#auth-form [name=name]').fill(name);
   await p.locator('#auth-form input[type=checkbox]').check();await p.locator('#auth-form button[type=submit]').click();
   await p.locator('#code-form').waitFor();const inbox=JSON.parse(await fs.readFile(path.join(root,'inbox.json'),'utf8'));assert.equal(inbox.email,email);
-  await p.locator('#code-form [name=code]').fill(inbox.code);await p.locator('#code-form button').click();
+  await p.locator('#code-form [name=code]').fill(inbox.code);await p.locator('#code-form [name=password]').fill('test password long enough');await p.locator('#code-form [name=confirmation]').fill('test password long enough');await p.locator('#code-form button').click();
   await p.locator('#auth-dialog').waitFor({state:'hidden'});await p.locator('#account-button').click();
  }
  try{

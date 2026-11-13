@@ -45,6 +45,12 @@ function clearIntent() { try { sessionStorage.removeItem('notta-intent'); } catc
 async function refreshMe() {
   try { state.me = await api('/me'); } catch (error) { if (error.status !== 401) throw error; state.me = null; }
   $('#account-button').textContent = state.me ? 'マイページ' : 'ログイン';
+  let banner = $('#password-setup-notice');
+  if (state.me && state.me.passwordSet === false) {
+    if (!banner) { banner = document.createElement('aside'); banner.id = 'password-setup-notice'; banner.className = 'banner'; document.body.prepend(banner); }
+    banner.innerHTML = 'メールアドレスとパスワードでログインできるようになりました。<button class="text-button" type="button">パスワードを設定する</button>';
+    $('button', banner).onclick = () => passwordRequest();
+  } else if (banner) banner.remove();
 }
 function headingFocus() { const title = $('#main h1'); if (title) { title.tabIndex = -1; title.focus({preventScroll:true}); } }
 function main(html) { $('#main').innerHTML = html; }
@@ -66,7 +72,7 @@ function landing() {
     <form id="goal-form" class="goal-form"><label for="goal">どんな企画を、誰とつくりたいですか？</label>
       <textarea id="goal" name="goal" maxlength="1000" required placeholder="例：料理の発信を見てくれる人と、季節のレシピをまとめた小冊子をつくりたい">${esc(intent())}</textarea>
       <button class="button" type="submit">自分の企画を無料でつくる <span aria-hidden="true">↗</span></button>
-      <p class="hint">メール認証ではじめられます。カード登録は不要で、自動で課金されることはありません。</p><p class="form-error" role="alert"></p></form>
+      <p class="hint">初回登録時にメールで本人確認します。次回からはパスワードでログインできます。カード登録は不要で、自動で課金されることはありません。</p><p class="form-error" role="alert"></p></form>
     ${!state.config.aiReady || !state.config.mailReady ? '<p class="status-line">無料体験の接続を準備しています。入力した企画はこの画面に残せます。</p>' : ''}</div>
     <div class="example-board" aria-label="作成する企画のサンプル"><div class="board-caption"><strong>ひとつの思いつきから</strong><span class="sample-label">説明用のサンプル</span></div>
       <div class="paper"><p class="eyebrow">PROJECT NOTE 01</p><h3>季節のレシピを、<br>みんなの一冊に。</h3>
@@ -106,7 +112,62 @@ async function startProject(goal) {
 
 function auth(after = () => navigate('/workspace')) {
   const dialog = $('#auth-dialog');
-  $('#auth-content').innerHTML = `<p class="eyebrow">WELCOME TO NOTTA</p><h2 id="auth-title">メールでログイン</h2><p class="dialog-lead">メールに届く確認コードでログインします。パスワードやカードの登録は不要です。</p>
+  $('#auth-content').innerHTML = `<p class="eyebrow">WELCOME TO NOTTA</p><h2 id="auth-title">ログイン</h2>
+    <form id="login-form" class="form-stack"><label>メールアドレス<input name="email" type="email" autocomplete="username" maxlength="200" required></label>
+    <label>パスワード<input name="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+    <p class="hint">ログアウトするまで、このブラウザーでログインを維持します。</p><p class="form-error" role="alert"></p><button class="button" type="submit">ログイン</button></form>
+    <div class="dialog-footer"><button class="text-button" id="signup-button">新規登録</button><button class="text-button" id="password-request-button">パスワードの設定・再設定</button></div>`;
+  if (!dialog.open) dialog.showModal();
+  $('#login-form').onsubmit = event => {
+    event.preventDefault(); const form = event.currentTarget;
+    busy($('button', form), async () => {
+      await api('/auth/login', {email:form.elements.email.value.trim(), password:form.elements.password.value});
+      await refreshMe(); dialog.close(); await after();
+    }, $('.form-error', form), 'ログインしています');
+  };
+  $('#signup-button').onclick = () => signup(after);
+  $('#password-request-button').onclick = () => passwordRequest(after);
+}
+
+function passwordRequest(after = () => navigate('/workspace')) {
+  const dialog = $('#auth-dialog');
+  $('#auth-content').innerHTML = `<h2 id="auth-title">パスワードの設定・再設定</h2><p>登録したメールアドレスに、24時間有効の設定リンクを送ります。</p>
+    <form id="password-request-form" class="form-stack"><label>メールアドレス<input name="email" type="email" autocomplete="email" maxlength="200" value="${esc(state.me?.user.email || '')}" required></label>
+    <p class="form-error" role="alert"></p><button class="button" type="submit">設定メールを送る</button><p role="status" id="password-request-status"></p></form><button class="text-button" id="back-to-login">ログインに戻る</button>`;
+  if (!dialog.open) dialog.showModal();
+  $('#password-request-form').onsubmit = event => {
+    event.preventDefault(); const form = event.currentTarget;
+    busy($('button', form), async () => { const result = await api('/auth/password/request', {email:form.elements.email.value.trim()}); $('#password-request-status').textContent = result.message; }, $('.form-error', form), '設定メールを送信しています');
+  };
+  $('#back-to-login').onclick = () => auth(after);
+}
+
+let passwordLinkToken = null;
+function passwordPage() {
+  if (passwordLinkToken === null) {
+    passwordLinkToken = new URLSearchParams(location.hash.slice(1)).get('token') || '';
+    history.replaceState(null, '', '/password');
+  }
+  main(`<div class="workspace"><h1>パスワードを設定する</h1><p>15〜128文字で設定してください。設定後は、メールアドレスとパスワードでログインできます。</p>
+    <form id="password-complete-form" class="form-stack"><label>新しいパスワード<input name="password" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label>
+    <label>新しいパスワード（確認）<input name="confirmation" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label>
+    <p class="form-error" role="alert"></p><button class="button" type="submit">パスワードを設定する</button></form><button class="text-button" id="new-password-link">設定メールを再発行する</button></div>`);
+  $('#password-complete-form').onsubmit = event => {
+    event.preventDefault(); const form = event.currentTarget;
+    busy($('button', form), async () => {
+      if (form.elements.password.value !== form.elements.confirmation.value) throw new Error('確認用のパスワードが一致しません。');
+      await api('/auth/password/complete', {token:passwordLinkToken, password:form.elements.password.value});
+      passwordLinkToken = ''; form.reset(); await refreshMe();
+      main('<div class="workspace"><h1>パスワードを設定しました</h1><p>メールアドレスとパスワードでログインしてください。</p><button class="button" id="password-login">ログインする</button></div>');
+      $('#password-login').onclick = () => auth();
+    }, $('.form-error', form), 'パスワードを設定しています');
+  };
+  $('#new-password-link').onclick = () => passwordRequest();
+}
+
+function signup(after = () => navigate('/workspace')) {
+  const dialog = $('#auth-dialog');
+  $('#auth-content').innerHTML = `<p class="eyebrow">WELCOME TO NOTTA</p><h2 id="auth-title">新規登録</h2><p class="dialog-lead">メールの確認後にパスワードを設定します。カード登録は不要です。</p>
     <form id="auth-form" class="form-stack"><label>メールアドレス<input name="email" type="email" autocomplete="email" maxlength="200" required></label><label>表示名<input name="name" autocomplete="nickname" maxlength="40" placeholder="サービス内で使う名前" required></label>
     <label class="check-label"><input type="checkbox" name="consent" required><span>18歳以上で、<a href="/terms" target="_blank" rel="noopener">利用規約</a>と<a href="/privacy" target="_blank" rel="noopener">個人情報の取扱い</a>に同意します。</span></label>
     <p class="form-error" role="alert"></p><button class="button" type="submit" ${state.config.mailReady ? '' : 'disabled'}>確認コードを送る</button></form>
@@ -123,14 +184,17 @@ function auth(after = () => navigate('/workspace')) {
 function codeForm(result, email, request, after) {
   $('#auth-content').innerHTML = `<p class="eyebrow">CHECK YOUR EMAIL</p><h2 id="auth-title">確認コードを入力</h2><p class="dialog-lead">${esc(email)} にお送りしました。<br>メールに記載された6桁の確認コードを入力してください。</p>
     ${result.delivery === 'unknown' ? `<p class="banner warning">${esc(result.message)}</p>` : ''}
-    <form id="code-form" class="form-stack"><label>確認コード<input class="code-input" name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="one-time-code" required></label><p class="form-error" role="alert"></p><button class="button" type="submit">ログインして続ける</button></form>
+    <form id="code-form" class="form-stack"><label>確認コード<input class="code-input" name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="one-time-code" required></label>
+    <label>パスワード（15〜128文字）<input name="password" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label>
+    <label>パスワード（確認）<input name="confirmation" type="password" minlength="15" maxlength="128" autocomplete="new-password" required></label>
+    <p class="form-error" role="alert"></p><button class="button" type="submit">登録して続ける</button></form>
     <div class="dialog-footer"><button class="text-button" id="resend-code">メールを再送する</button><button class="text-button" id="change-email">メールアドレスを変更</button><p class="hint">確認コードの有効期間は10分です。メールが届かない場合は迷惑メールも確認してください。</p></div>`;
   $('[name=code]', $('#code-form')).focus();
   $('#code-form').addEventListener('submit', event => { event.preventDefault(); const form = event.currentTarget;
-    busy($('button', form), async () => { await api('/auth/verify', {challenge:result.challenge, code:form.elements.code.value}); await refreshMe(); nottaWait.message('画面を準備しています'); $('#auth-dialog').close(); await after(); }, $('.form-error', form), 'ログインを確認しています');
+    busy($('button', form), async () => { if (form.elements.password.value !== form.elements.confirmation.value) throw new Error('確認用のパスワードが一致しません。'); await api('/auth/verify', {challenge:result.challenge, code:form.elements.code.value, password:form.elements.password.value}); await refreshMe(); nottaWait.message('画面を準備しています'); $('#auth-dialog').close(); await after(); }, $('.form-error', form), '登録を確認しています');
   });
   $('#resend-code').addEventListener('click', event => busy(event.currentTarget, async () => { const next = await api('/auth/start', request); codeForm(next, email, request, after); notice('確認メールを再送しました。'); }, null, '確認コードを送信しています'));
-  $('#change-email').addEventListener('click', () => auth(after));
+  $('#change-email').addEventListener('click', () => signup(after));
 }
 
 function contractDetails() {
@@ -339,13 +403,14 @@ async function render() {
   await refreshMe();
   document.body.classList.toggle('workspace-theme', !!state.config.workspaceMode);
   const path = location.pathname;
+  if (path === '/password') return passwordPage();
   if (['/terms','/privacy','/legal'].includes(path)) return legalPage(path.slice(1));
   if (path.startsWith('/p/')) return publicPage(path.split('/')[2]);
   if (state.config.workspaceMode && await nottaWorkspace.render(path)) return;
   const legacy = path === '/workspace' && state.me && (state.me.projects.length || state.me.applications.length || state.me.billing.subscription) && (new URLSearchParams(location.search).has('legacy') || new URLSearchParams(location.hash.slice(1)).has('project'));
   if (state.config.intakeMode && !legacy) return nottaIntake.render(path);
   if (path === '/workspace' || path === '/billing/return') {
-    if (!state.me) { main('<div class="error-page"><p class="eyebrow">YOUR WORKSPACE</p><h1>企画の続きを確認する</h1><p>メール認証でログインすると、保存した企画や参加状況を確認できます。</p><button class="button" id="workspace-login">ログインする</button></div>'); $('#workspace-login').addEventListener('click', () => auth(render)); return; }
+    if (!state.me) { main('<div class="error-page"><p class="eyebrow">YOUR WORKSPACE</p><h1>企画の続きを確認する</h1><p>メールアドレスとパスワードでログインすると、保存した企画や参加状況を確認できます。</p><button class="button" id="workspace-login">ログインする</button></div>'); $('#workspace-login').addEventListener('click', () => auth(render)); return; }
     const id = new URLSearchParams(location.hash.slice(1)).get('project');
     if (id && /^[a-f0-9]{24}$/.test(id)) return projectPage(id);
     dashboard(); return;

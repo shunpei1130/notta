@@ -71,6 +71,8 @@ def auth_start(c, data, ip):
 
 
 def auth_verify(c, data):
+    import password_auth as passwords
+    password_hash = passwords.HASHER.hash(passwords.password(data.get('password')))
     challenge = s.text(data.get("challenge"), 24)
     code = s.text(data.get("code"), 6)
     s.require(re.fullmatch(r"[0-9]{6}", code), 400, "6桁の確認コードを入力してください。")
@@ -87,9 +89,13 @@ def auth_verify(c, data):
         c.execute("INSERT INTO users VALUES(?,?,?,?,?,?)", (uid, row["email"], row["name"] or "参加者", "creator", secrets.token_hex(16), "disabled-password-login"))
         user = c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     c.execute("INSERT OR IGNORE INTO svc_accounts(user_id,verified_at,created) VALUES(?,?,?)", (user["id"], s.stamp(), s.stamp()))
+    s.require(not c.execute('SELECT 1 FROM svc_passwords WHERE user_id=?', (user['id'],)).fetchone(), 403, '登録を完了できません。ログインまたはパスワードの再設定をご利用ください。')
+    c.execute('INSERT INTO svc_passwords VALUES(?,?,?)', (user['id'], password_hash, s.stamp()))
+    c.execute('UPDATE svc_password_tokens SET used=1 WHERE user_id=?', (user['id'],))
+    c.execute('DELETE FROM sessions WHERE user_id=?', (user['id'],))
     c.execute("UPDATE svc_auth SET used=1 WHERE email=?", (row["email"],))
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
-    c.execute("INSERT INTO sessions VALUES(?,?,?,?)", (hashlib.sha256(token.encode()).hexdigest(), user["id"], csrf, s.stamp() + 28800))
+    c.execute("INSERT INTO sessions VALUES(?,?,?,?)", (hashlib.sha256(token.encode()).hexdigest(), user["id"], csrf, passwords.PERSISTENT))
     event(c, user["id"], "verified_login")
     c.commit()
     return {"user": {key: user[key] for key in ("id", "name", "email")}, "csrf": csrf}, token

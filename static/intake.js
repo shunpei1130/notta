@@ -47,13 +47,13 @@ window.nottaIntake = (() => {
       <form id="goal-form" class="goal-form"><label for="goal">どんな企画を、誰とつくりたいですか？</label>
       <textarea id="goal" name="goal" maxlength="1000" required placeholder="例：いつも動画を見てくれるファンと、小さな写真展をつくってみたい。">${esc(intent())}</textarea>
       <p class="form-error" role="alert"></p><button class="button" type="submit">無料でヒアリングをはじめる <span aria-hidden="true">→</span></button>
-      <p class="hint">メール認証のあと、1問ずつお聞きします。未定でも大丈夫。<br>初回は1人1企画・無料・カード登録不要</p></form>
+      <p class="hint">ログインのあと、1問ずつお聞きします。初めての方はメールで本人確認します。未定でも大丈夫。<br>初回は1人1企画・無料・カード登録不要</p></form>
       ${state.me?.intake ? '<p class="hint"><a href="/intakes/' + esc(state.me.intake.id) + '">受付済みの企画の続きを見る →</a></p>' : ''}</div>
       <section class="intro-video" aria-labelledby="intro-video-title"><h2 id="intro-video-title">動画で見る、ノッタの使い方</h2><video controls playsinline preload="none" poster="/assets/notta-intro-poster.jpg" width="1920" height="1080" aria-label="ノッタ紹介動画"><source src="/assets/notta-intro.mp4" type="video/mp4">動画を再生できない場合は、<a href="/assets/notta-intro.mp4">紹介動画を開く</a>をご利用ください。</video></section>
       <aside class="example-board case-board" aria-labelledby="cases-title"><div class="board-caption"><h2 id="cases-title">過去事例</h2></div><p class="hint">みんなの力を持ち寄る、4つのモデルケース。企画と人数は架空の設定です。</p><div class="case-grid">${cases.map((c,i) => `<button type="button" class="case-card" data-case="${i}" aria-haspopup="dialog"><span class="sample-label">モデルケース</span><strong>${esc(c.title)}</strong><span>参加者 <b>${c.total}</b> 名</span><span class="case-link">内訳を見る →</span></button>`).join('')}</div></aside></section>
       <div class="intro-strip"><span><b>01</b> 思いついたことをそのまま入力</span><span><b>02</b> 10問にひとつずつ回答</span><span><b>03</b> 数時間後、メールでお知らせ</span></div>
       <section class="section" id="how"><div class="section-head"><h2>「何からやれば？」を、<br>小さなタスクに。</h2><p>初期版では、ヒアリングをAIが担当し、タスク分解は運営が行います。</p></div>
-      <div class="steps"><article class="step"><p class="step-num">01</p><h3>やりたいことを話す</h3><p>メール認証でログインしたら、チャットが開きます。目的や日程、手伝ってほしいことなどを1問ずつお聞きします。</p></article>
+      <div class="steps"><article class="step"><p class="step-num">01</p><h3>やりたいことを話す</h3><p>メールアドレスとパスワードでログインしたら、チャットが開きます。目的や日程、手伝ってほしいことなどを1問ずつお聞きします。</p></article>
       <article class="step"><p class="step-num">02</p><h3>ノッタが整理する</h3><p>回答を送信したら、いったんお任せください。運営が企画の概要をまとめ、企画に必要な作業をファンにお願いしやすいタスクに分けます。数時間ほどお時間をいただきます。</p></article>
       <article class="step"><p class="step-num">03</p><h3>できたら、メールで確認</h3><p>メールにあるリンクからログインすると、企画とタスクカードを確認できます。内容のご相談はメールで受け付けます。</p></article></div></section>
       <section class="pricing" id="pricing"><div class="section"><div class="section-head"><h2>まずは、ひとつの企画を無料で。</h2><p>10問のヒアリング、企画の概要、タスク分解の確認まで無料です。自動で課金されることはありません。</p></div>
@@ -211,12 +211,26 @@ window.nottaIntake = (() => {
 
   async function adminList(before) {
     const data = await api('/admin/intakes' + (before ? '?before=' + encodeURIComponent(before) : ''));
+    const invitations = await api('/admin/password-invitations');
     document.title = 'ヒアリング受付一覧｜ノッタ';
     main(`<div class="workspace"><div class="workspace-top"><div><p class="eyebrow">NOTTA OPERATIONS</p><h1>ヒアリングの受付</h1></div>${accountTools()}</div>
       <p>ヒアリングの回答を確認し、企画とタスクを登録して、依頼者に完成のメールを送れます。</p><div class="project-list">${data.items.map(item => `<article class="project-card"><span class="pill">${esc(labels[item.state])}</span><h2>${esc(item.name)}</h2><p>${esc(item.email)}</p><p class="text-block">${esc(item.goal)}</p><p>受付：${time(item.submitted || item.created)}</p>
       ${item.notifications.some(n => n.status !== 'sent') ? '<p class="banner warning">送信状況の確認が必要な通知があります。</p>' : ''}<a class="button secondary compact" href="/admin/intakes/${item.id}">回答と結果を開く →</a></article>`).join('') || '<p class="empty">まだ受付はありません。</p>'}</div>
-      ${data.next ? '<button class="button secondary" id="next-intakes">次の50件</button>' : ''}${before ? '<p><a href="/admin/intakes">一覧の先頭へ</a></p>' : ''}</div>`);
+      ${data.next ? '<button class="button secondary" id="next-intakes">次の50件</button>' : ''}${before ? '<p><a href="/admin/intakes">一覧の先頭へ</a></p>' : ''}
+      <section class="panel"><h2>パスワード設定のご案内</h2><p>パスワード未設定の既存ユーザーへ、本人専用の設定リンクを個別に送ります。同じ案内の重複送信はしません。</p>
+      <p id="password-invitation-status" role="status">未送信：${Number(invitations.eligible || 0)}人 · 送信サービスで受付済み：${Number(invitations.statuses?.sent || 0)}人 · 要確認：${Number(invitations.statuses?.unknown || 0) + Number(invitations.statuses?.sending || 0) + Number(invitations.statuses?.failed || 0)}人</p>
+      <button class="button secondary" id="send-password-invitations" ${invitations.eligible ? '' : 'disabled'}>未送信の${Number(invitations.eligible || 0)}人へ設定案内を送る</button><p class="form-error" id="password-invitation-error" role="alert"></p></section></div>`);
     $('#next-intakes')?.addEventListener('click', () => busy($('#next-intakes'), () => adminList(data.next)));
+    $('#send-password-invitations').addEventListener('click', event => { const button = event.currentTarget; return busy(button, async () => {
+      let remaining = invitations.eligible;
+      while (remaining > 0) {
+        const result = await api('/admin/password-invitations', {});
+        $('#password-invitation-status').textContent = `未送信：${result.eligible}人 · 送信サービスで受付済み：${result.statuses.sent || 0}人 · 要確認：${(result.statuses.unknown || 0) + (result.statuses.sending || 0) + (result.statuses.failed || 0)}人`;
+        if (result.eligible >= remaining) throw new Error('送信状況を確認してから一覧を再読み込みしてください。');
+        remaining = result.eligible;
+      }
+      button.textContent = '設定案内の送信処理が完了しました';
+    }, $('#password-invitation-error')); });
   }
 
   function collectResult() {
@@ -350,8 +364,8 @@ window.nottaIntake = (() => {
     const company = `<p>MAORA株式会社（マオラ）<br>運営責任者：長谷川峻平<br>東京都千代田区内神田1-9-12 J.NODE 内神田5階<br>${esc(state.config.phone)}<br>${contact}<br><a href="https://www.maora.co.jp/" target="_blank" rel="noopener noreferrer">会社公式サイト ↗</a></p>`;
     const legacy = '<h2>既存の月額契約</h2><p>新規の月額申込みは停止しています。すでに契約している方のお支払い・更新停止・返金の窓口はマイページに残しています。既存契約は月額3,000円（税込総額）で毎月自動更新し、初回支払いから7日以内に申出があれば、初回料金を全額返金します。次回更新の停止はマイページから行えます。通常の更新停止では日割り返金はありません。ご不明な点は運営へお問い合わせください。</p>';
     const pages = {
-      terms:['利用規約', '<p>2026年10月27日改定。ノッタはMAORA株式会社（以下「当社」）が提供します。</p><h2>サービスの内容</h2><p>初期版では、最初の企画入力と10問のヒアリングを受け付け、当社が企画の概要と役割ごとのタスクを整理します。AIを利用するのは質問文の作成だけです。AIが利用できない場合は定型の質問で進めます。質問への回答は「未定」「おまかせ」でも構いません。10問目の自由記入は任意です。</p><h2>料金と提供時期</h2><p>初回は1人1企画、ヒアリングからタスク分解の確認まで無料です。カード登録や自動課金はありません。回答を送信すると当社が受け付け、作業完了後にメールで通知します。作業には数時間ほどかかる見込みです。内容や受付状況によって時間がかかる場合があります。</p><h2>閲覧できる人とサービスの提供範囲</h2><p>回答と結果を確認できるのはご本人と運営のみです。この受付にはファンへの募集公開、担当の割当、集客、当日の運営は含みません。企画の実現、人数、収益を保証するものではありません。結果の内容、日程、権利や参加条件はご自身で確認し、ご不明な点は運営へご相談ください。</p><h2>アカウントと投稿</h2><p>18歳以上の方が利用できます。正しいメールアドレスを登録し、確認コードを他人と共有しないでください。投稿の権利は利用者または正当な権利者に帰属します。当社はサービス提供に必要な範囲で保存・処理・表示します。権利侵害、違法行為、なりすまし、嫌がらせ、不正アクセス、過度な利用を禁止します。秘密情報や不要な個人情報は入力しないでください。</p><h2>障害・サービスの変更</h2><p>外部サービスの障害等で機能を一時制限する場合があります。重要な変更や終了は、利用者への案内と必要な対応を含めてお知らせします。当社の故意・重過失など、法令上免責できない責任を免除しません。</p>' + legacy + '<h2>お問い合わせ</h2>' + company],
-      privacy:['プライバシーポリシー', '<p>2026年10月29日改定。MAORA株式会社は以下のとおり個人情報を取り扱います。</p><h2>取得する情報と利用目的</h2><p>表示名、確認済みメールアドレス、入力した企画、ヒアリングの質問と回答、作成した結果、認証・送信の記録を、本人認証、タスク分解、完成通知、問い合わせ対応に使用します。認証の不正利用を防ぐため、IPアドレスを秘密鍵で変換した値と試行回数を記録します。広告目的の追跡や営業メールへの転用はしません。既存契約の支払と返金の状態は契約管理に使用します。</p><h2>運営に送信する情報と閲覧できる人</h2><p>すべての回答を送信した時点で、最初に入力した企画、表示名、確認済みメールアドレス、全10問の質問と回答、受付IDと日時を運営の shumpei.hasegawa@maora.co.jp に送信します。企画と結果は本人と運営のみ閲覧でき、この受付で一般公開はしません。作業が完了したら、本人に結果を確認するためのリンクをメールで送ります。閲覧にはログインが必要です。</p><h2>外部サービスへの送信</h2><p>質問文を作成するために、最初に入力した企画とそれまでの質問・回答をOpenAIのAPIまたはGoogle Gemini APIへ送信します。システムから表示名やメールアドレスをAIに送ることはありませんが、回答中に入力した情報は含まれます。検索は使用しません。メール送信にResend、データ保存にNeon、サイト配信にVercelを利用します。国外で処理する場合があります。既存契約の決済はStripeが処理し、当社はカード番号やセキュリティコードを保存しません。</p><h2>保管・安全管理</h2><p>通信の暗号化、本人認証、権限の確認を行います。確認コードは10分で失効し、ハッシュとして保存します。再ログイン後も続きから回答できるよう、送信済みの回答を保存します。まだ送信していない入力内容は同じブラウザーのタブに一時保存します。会計記録など保存義務のある情報を除き、サービスに必要な範囲で保管し、削除・訂正・開示の相談には本人確認のうえ対応します。</p><h2>お問い合わせ</h2>' + company],
+      terms:['利用規約', '<p>2026年10月27日改定。ノッタはMAORA株式会社（以下「当社」）が提供します。</p><h2>サービスの内容</h2><p>初期版では、最初の企画入力と10問のヒアリングを受け付け、当社が企画の概要と役割ごとのタスクを整理します。AIを利用するのは質問文の作成だけです。AIが利用できない場合は定型の質問で進めます。質問への回答は「未定」「おまかせ」でも構いません。10問目の自由記入は任意です。</p><h2>料金と提供時期</h2><p>初回は1人1企画、ヒアリングからタスク分解の確認まで無料です。カード登録や自動課金はありません。回答を送信すると当社が受け付け、作業完了後にメールで通知します。作業には数時間ほどかかる見込みです。内容や受付状況によって時間がかかる場合があります。</p><h2>閲覧できる人とサービスの提供範囲</h2><p>回答と結果を確認できるのはご本人と運営のみです。この受付にはファンへの募集公開、担当の割当、集客、当日の運営は含みません。企画の実現、人数、収益を保証するものではありません。結果の内容、日程、権利や参加条件はご自身で確認し、ご不明な点は運営へご相談ください。</p><h2>アカウントと投稿</h2><p>18歳以上の方が利用できます。正しいメールアドレスを登録し、パスワード、確認コード、設定リンクを他人と共有しないでください。投稿の権利は利用者または正当な権利者に帰属します。当社はサービス提供に必要な範囲で保存・処理・表示します。権利侵害、違法行為、なりすまし、嫌がらせ、不正アクセス、過度な利用を禁止します。秘密情報や不要な個人情報は入力しないでください。</p><h2>障害・サービスの変更</h2><p>外部サービスの障害等で機能を一時制限する場合があります。重要な変更や終了は、利用者への案内と必要な対応を含めてお知らせします。当社の故意・重過失など、法令上免責できない責任を免除しません。</p>' + legacy + '<h2>お問い合わせ</h2>' + company],
+      privacy:['プライバシーポリシー', '<p>2026年10月29日改定。MAORA株式会社は以下のとおり個人情報を取り扱います。</p><h2>取得する情報と利用目的</h2><p>表示名、確認済みメールアドレス、入力した企画、ヒアリングの質問と回答、作成した結果、認証・送信の記録を、本人認証、タスク分解、完成通知、問い合わせ対応に使用します。認証の不正利用を防ぐため、IPアドレスを秘密鍵で変換した値と試行回数を記録します。広告目的の追跡や営業メールへの転用はしません。既存契約の支払と返金の状態は契約管理に使用します。</p><h2>運営に送信する情報と閲覧できる人</h2><p>すべての回答を送信した時点で、最初に入力した企画、表示名、確認済みメールアドレス、全10問の質問と回答、受付IDと日時を運営の shumpei.hasegawa@maora.co.jp に送信します。企画と結果は本人と運営のみ閲覧でき、この受付で一般公開はしません。作業が完了したら、本人に結果を確認するためのリンクをメールで送ります。閲覧にはログインが必要です。</p><h2>外部サービスへの送信</h2><p>質問文を作成するために、最初に入力した企画とそれまでの質問・回答をOpenAIのAPIまたはGoogle Gemini APIへ送信します。システムから表示名やメールアドレスをAIに送ることはありませんが、回答中に入力した情報は含まれます。検索は使用しません。メール送信にResend、データ保存にNeon、サイト配信にVercelを利用します。国外で処理する場合があります。既存契約の決済はStripeが処理し、当社はカード番号やセキュリティコードを保存しません。</p><h2>保管・安全管理</h2><p>通信の暗号化、本人認証、権限の確認を行います。確認コードは10分、パスワードの設定・再設定リンクは24時間で失効し、一度だけ使えます。確認コードと設定用トークンはハッシュとして保存し、パスワードはArgon2idでハッシュ保存します。ログアウトするまで同じブラウザーのログイン状態を維持します。ブラウザーの保存制限やCookieの削除、パスワードの再設定により再ログインが必要になる場合があります。再ログイン後も続きから回答できるよう、送信済みの回答を保存します。まだ送信していない入力内容は同じブラウザーのタブに一時保存します。会計記録など保存義務のある情報を除き、サービスに必要な範囲で保管し、削除・訂正・開示の相談には本人確認のうえ対応します。</p><h2>お問い合わせ</h2>' + company],
       legal:['特定商取引法に基づく表記', company + '<h2>現在の提供内容・価格</h2><p>初回1人1企画。10問のヒアリング、企画の概要とタスク分解の確認まで0円です。回答を受け付けてから数時間を目安に作業し、完成後にメールでお知らせします。インターネット接続の通信費は利用者のご負担です。新規の有料申込みは停止しています。</p>' + legacy + '<h2>お支払い・返金方法（既存契約）</h2><p>Stripeによるカード決済です。申込み時に初回決済、以後毎月同じ日を基準に更新します。同じ日がない月は月末です。返金は原則として元のお支払方法に行い、明細への反映日はカード会社によって異なります。</p><h2>利用環境</h2><p>最新版のChrome・Safari・Edge等とインターネット接続が必要です。</p>'],
     };
     if (state.config.workspaceMode) {

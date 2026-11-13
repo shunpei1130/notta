@@ -25,6 +25,7 @@ def main():
     with Postgres(dsn) as connection:
         existing = connection.execute("SELECT table_name FROM information_schema.tables WHERE table_schema='public'").fetchall()
         tables += ['svc_workspaces','svc_workspace_history','svc_workspace_messages','svc_workspace_reads']
+        tables += ['svc_passwords','svc_password_mail','svc_password_tokens','svc_auth_attempts']
         before = len(existing)
         if not args.apply:
             print('Migration ready: additive service tables; existing tables:', before)
